@@ -13,7 +13,10 @@ License: [MIT](LICENSE). Windows builds are set up to be signed through SignPath
 **From source:** Python 3.10 to 3.12 on Windows, with a webcam.
 
     pip install -r requirements.txt
+    python tools/get_model.py
     python main.py
+
+`tools/get_model.py` downloads MediaPipe's Face Landmarker model (about 3.7 MB) into `assets/models/`. Blinks are detected much more reliably with it. Without it the app falls back to eye landmarks. The release build includes the model.
 
 On first run, three setup screens check the camera, measure input delay and set a few options. After that the app lives in the tray. `Blinkythm.bat` starts it without a console window.
 
@@ -72,7 +75,9 @@ The app runs a single loop: 60 fps while a window is visible, 15 fps while it wa
 
 ## Timing calibration
 
-The timing screen works like the calibration in many rhythm games: a metronome keeps ticking at 60 BPM, one tick per second, and you blink along for as long as you like. A dot circles a ring once per beat and reaches the top on the tick. Each blink leaves a mark on the ring at the point where it landed, so early and late blinks show up on either side of the top.
+The timing screen works like the calibration in many rhythm games: a metronome keeps ticking at 60 BPM, one tick per second, and you blink along for as long as you like. The metronome is a one-bar sound looped by the mixer, so it never stops on its own.
+
+A dot circles a ring once per beat and passes the notch at the top on the tick. Each blink leaves a mark on the ring where it landed; older marks fade. The arrow outside the ring points at the offset that would be applied right now and moves as new blinks come in, with its value next to it. It is orange while the value is still unsteady and yellow once it can be used. A dim notch shows the offset currently saved, so you can see how far the new one moves it.
 
 The offset is the median of the last 16 blinks, ignoring blinks more than 150 ms from that median. It can be used once 8 blinks agree within a spread of 90 ms. R starts over. You can measure again at any time from Settings.
 
@@ -87,9 +92,17 @@ All of these must hold. The values are on the Settings tab.
 
 If your face is gone for 90 seconds, you are treated as away and screen time resets to zero. Finishing a game resets it too. The prompt has no default button, so typing cannot trigger it, and its buttons do nothing for the first 1.2 seconds. With no answer after 90 seconds it counts as a snooze.
 
+## Blink detection
+
+Eye openness comes from MediaPipe Face Landmarker's eyeBlinkLeft and eyeBlinkRight scores, from a model trained to recognise blinks. If the model file is missing, the eye aspect ratio (EAR) of FaceMesh landmarks is used instead. Landmarks are smoothed between frames, so fast blinks show up as shallow dips.
+
+- The open-eye level adapts to the last 30 seconds. A frame below a share of it counts as closing: 62% (Low), 72% (Normal) or 78% (High) sensitivity. One frame is enough, because a quick blink often lasts a single frame at 30 fps.
+- During games and setup every camera frame is processed; in the background 15 per second. The camera is asked for MJPG at 640x480 and 30 fps with a one-frame buffer.
+- The camera screen (first-run setup, or Settings > Check the camera) shows a live graph of eye openness over the last 5 seconds, with the threshold line and a mark for every detected blink, plus a counter. If blinks are missed, raise the sensitivity there and watch the counter. High can count a few false blinks when the signal is noisy.
+
 ## Judging
 
-The input time is the moment your eyes start to close. The detector interpolates where eye openness (EAR) crosses the threshold between two frames, so the time is finer than the 33 ms frame interval of a 30 fps camera. A blink is judged as soon as the closing has been seen in two frames in a row. Events that arrive late keep their original time, so the delay does not affect the result.
+The input time is the moment your eyes start to close. The detector interpolates where eye openness crosses the threshold between two frames, so the time is finer than the 33 ms frame interval of a 30 fps camera. A blink is judged on the first frame that crosses the threshold. Events that arrive late keep their original time, so the delay does not affect the result.
 
 | Grade | Distance from the beat | Points |
 |---|---|---|
@@ -134,6 +147,7 @@ Video is used in memory to find eye landmarks and is never saved or sent. The ap
     assets/fonts/              Galmuri bitmap fonts and their license (OFL.txt)
     tools/make_assets.py       generates the PNG and WAV files: python tools/make_assets.py
     tools/make_icon.py         builds the exe icon
+    tools/get_model.py         downloads the Face Landmarker model into assets/models/ (not committed)
     tests/test_core.py         logic tests and headless game-flow tests: python tests/test_core.py
     docs/releases/             release notes, one file per version
     docs/signpath-artifact-configuration.xml   what SignPath signs inside the build
@@ -178,13 +192,16 @@ The Windows build bundles these packages. Their licenses as listed on PyPI:
 | pystray | LGPL 3.0 |
 | Pillow | MIT-CMU |
 | Galmuri fonts | SIL Open Font License 1.1 |
+| MediaPipe Face Landmarker model (downloaded at build time) | not confirmed, see Known limitations |
 
 The exe is built with PyInstaller (GPL 2.0 or later with an exception that allows distributing the built program under any license).
 
 ## Known limitations
 
 - The development machine has no webcam and no Windows. Detection was tested with synthetic EAR series (30 and 15 fps, device delay, noise), and the screens and flow on a Linux virtual display with keyboard input. On Windows, only the window size calculation for high-DPI monitors was tested.
-- Glasses glare, a tilted or turned head and dim light make EAR noisy and lower detection. The open-eye baseline adapts to the last 30 seconds.
+- Glasses glare, a tilted or turned head and dim light make the eye signal noisy and lower detection. The open-eye level adapts to the last 30 seconds.
+- Detection was tuned on synthetic signals: short, shallow and smoothed blinks at 30 and 15 fps. How well the blink scores work for a given face and camera still has to be checked on real hardware with the camera screen.
+- The Face Landmarker model is downloaded from Google's MediaPipe model storage. Its license could not be confirmed from an official page during development. Check it before relying on it for distribution.
 - Bluetooth headphones add large, unstable delay. The timing screen will not accept a measurement until the spread is small.
 - The reminder uses an SDL setting so that showing it does not take keyboard focus. This could not be checked on Windows here.
 - With no audio device on the development machine, the music and effects were checked only by their waveforms (length, peak level, cue positions). The mix still needs a listen on real speakers.

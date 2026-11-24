@@ -50,11 +50,40 @@ def test_detector_15fps_and_noise_flutter():
     starts = [2 + 2.0 * k for k in range(10)]
     closes, _ = run_detector(synth_ear(starts, 15, 24))
     assert len(closes) == 10
-    # a one-frame noise dip is ignored
+    # small noise dips are ignored
     ser = synth_ear([], 30, 10)
-    ser = [(t, 0.05 if i == 100 else e) for i, (t, e) in enumerate(ser)]
+    ser = [(t, 0.24 if i == 100 else e) for i, (t, e) in enumerate(ser)]
     closes, _ = run_detector(ser)
     assert closes == []
+
+
+def _smoothed(fps, closed, blink_len, alpha, n=40, noise=0.008, seed=1):
+    """Short, shallow blinks passed through exponential smoothing, like landmark trackers produce."""
+    starts = [2 + 1.3 * k for k in range(n)]
+    out, acc = [], None
+    for t, e in synth_ear(starts, fps, 2 + 1.3 * n + 2, closed=closed, blink_len=blink_len, noise=noise, seed=seed):
+        acc = e if acc is None else acc + alpha * (e - acc)
+        out.append((t, acc))
+    return out
+
+
+def test_detector_fast_shallow_blinks():
+    # fast blinks that only dip for one frame below the threshold must still count
+    for fps, closed in ((30, 0.16), (15, 0.14)):
+        closes, _ = run_detector(_smoothed(fps, closed, 0.02 if fps == 30 else 0.03, 0.5 if fps == 30 else 0.6))
+        assert len(closes) >= 38, (fps, len(closes))
+    # higher sensitivity catches even shallower ones
+    d_closes = []
+    from blinkythm.detector import BlinkDetector as BD
+    d = BD(lambda o: d_closes.append(o))
+    d.set_sensitivity(2)
+    for t, e in _smoothed(30, 0.18, 0.02, 0.5):
+        d.feed(t, e)
+    assert len(d_closes) >= 38
+    # an open-eye signal with ordinary noise gives no false blinks at Normal
+    closes, _ = run_detector(synth_ear([], 30, 120, noise=0.01, seed=5))
+    assert closes == []
+    assert d.count == len(d_closes) and len(d.history) > 0
 
 
 def test_long_close_not_counted_as_blink():
@@ -339,6 +368,9 @@ def test_first_run_setup():
         _frames(app)
         assert w.visible and isinstance(w.screen, SY.SetupCameraScreen)
         assert not w.screen.buttons[0].enabled            # waits until a face has been seen for a moment
+        w.screen.key(pygame.K_RIGHT)                      # sensitivity row is selected first
+        assert app.settings.blink_sensitivity == 2 and app.tracker.detector.close_ratio == 0.78
+        w.screen.key(pygame.K_LEFT)
         w.screen.face_since = 0.0
         _frames(app, 2)
         assert w.screen.buttons[0].enabled
@@ -347,6 +379,8 @@ def test_first_run_setup():
         cal = w.screen
         assert isinstance(cal, SY.SetupCalibScreen) and cal.cal is not None
         assert w.busy                                     # calibration blinks stay out of the statistics
+        # the metronome loops on its own channel instead of a long buffer that can run out
+        assert pygame.mixer.Channel(0).get_busy() and app.audio._loop.get_length() == R.CAL_BEAT * 4
         for k in range(1, 13):
             cal.blink(cal.t0 + k * R.CAL_BEAT + 0.15 + (0.01 if k % 2 else -0.01))
         _frames(app, 2)
@@ -489,6 +523,27 @@ def test_medley_and_double_blink():
     finally:
         app.shutdown()
 
+
+
+def test_face_model_loads():
+    """The blink-score model loads when present (the release build downloads it first)."""
+    from blinkythm.tracker import CameraTracker, MODEL_FILE
+    path = os.path.join(A.assets_dir(), "models", MODEL_FILE)
+    try:
+        import mediapipe as mp
+    except Exception:
+        print("skip: mediapipe not installed")
+        return
+    if not os.path.isfile(path):
+        print("skip: model not downloaded (python tools/get_model.py)")
+        return
+    tr = CameraTracker(UsageMonitor(Settings()))
+    lm = tr._landmarker(mp)
+    assert lm is not None
+    import numpy as np
+    res = lm.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.zeros((480, 640, 3), np.uint8)), 0)
+    assert res.face_blendshapes == []                  # no face in a black frame
+    lm.close()
 
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):          # avoid encoding errors on the Windows console (cp1252)

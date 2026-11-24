@@ -40,6 +40,7 @@ class App:
         self.monitor = UsageMonitor(self.settings)
         self.tracker = (SimTracker(self.monitor, self.settings.latency_offset) if sim
                         else CameraTracker(self.monitor, self.settings.camera_index))
+        self.tracker.set_sensitivity(self.settings.blink_sensitivity)
         self.audio = Audio(self.settings.volume)
 
         from .game.window import MainWindow

@@ -1,9 +1,18 @@
-"""Webcam -> eye openness (EAR) -> BlinkDetector. Frames stay in memory and are never saved or sent."""
+"""Webcam -> eye openness -> BlinkDetector. Frames stay in memory and are never saved or sent.
+
+The preferred signal is MediaPipe Face Landmarker's eyeBlink scores (a model trained for this),
+read from assets/models/face_landmarker.task. Without that file the tracker falls back to the eye
+aspect ratio (EAR) from FaceMesh landmarks, which reacts less to fast blinks.
+"""
+import os
 import sys
 import threading
 import time
 
 from .detector import BlinkDetector
+
+MODEL_FILE = "face_landmarker.task"
+OPEN_LEVEL_SCORES = 0.95        # typical openness (1 - blink score) with eyes open
 
 # MediaPipe FaceMesh eye landmarks (p1, p2, p3, p4, p5, p6)
 RIGHT_EYE = (33, 160, 158, 133, 153, 144)
@@ -35,6 +44,7 @@ class BaseTracker:
         self.face_visible = False
         self.error = None
         self.frame_dt = 1 / 30           # recent frame interval (s)
+        self.source = ""                 # "blink scores" or "landmarks", shown on the camera screen
         self._listeners = []
         self._lock = threading.Lock()
 
@@ -72,6 +82,13 @@ class BaseTracker:
     def set_game_mode(self, on):
         self.game_mode = on
 
+    def set_sensitivity(self, level):
+        self.detector.set_sensitivity(level)
+
+    @property
+    def fps(self):
+        return 1.0 / max(self.frame_dt, 1e-3)
+
     def start(self): ...
     def stop(self): ...
     def restart(self, camera_index=None): ...
@@ -102,6 +119,25 @@ class CameraTracker(BaseTracker):
             self.camera_index = camera_index
         self.start()
 
+    def _landmarker(self, mp):
+        """Face Landmarker in video mode, or None if the model file is missing or fails to load."""
+        from .audio import assets_dir
+        path = os.path.join(assets_dir(), "models", MODEL_FILE)
+        if not os.path.isfile(path):
+            return None
+        try:
+            from mediapipe.tasks import python as mpt
+            from mediapipe.tasks.python import vision
+            opts = vision.FaceLandmarkerOptions(
+                base_options=mpt.BaseOptions(model_asset_path=path),
+                running_mode=vision.RunningMode.VIDEO, num_faces=1,
+                output_face_blendshapes=True,
+                min_face_detection_confidence=0.5, min_face_presence_confidence=0.5,
+                min_tracking_confidence=0.5)
+            return vision.FaceLandmarker.create_from_options(opts)
+        except Exception:
+            return None
+
     def _run(self):
         try:
             import cv2
@@ -114,12 +150,24 @@ class CameraTracker(BaseTracker):
         if not cap.isOpened():
             self.error = "Cannot open camera %d. Another app may be using it, or privacy settings may block it." % self.camera_index
             return
+        # MJPG lets most webcams deliver 30 fps at this size over USB; a 1-frame buffer keeps latency low.
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.set(cv2.CAP_PROP_FPS, 30)
-        mesh = mp.solutions.face_mesh.FaceMesh(
-            max_num_faces=1, refine_landmarks=False,
-            min_detection_confidence=0.5, min_tracking_confidence=0.5)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        landmarker = self._landmarker(mp)
+        mesh = None
+        if landmarker is not None:
+            self.source = "blink scores"
+            self.detector.reset_baseline(OPEN_LEVEL_SCORES)
+        else:
+            self.source = "landmarks"
+            mesh = mp.solutions.face_mesh.FaceMesh(
+                max_num_faces=1, refine_landmarks=True,
+                min_detection_confidence=0.5, min_tracking_confidence=0.5)
+        t_start = time.perf_counter()
+        last_ms = -1
         last_proc = 0.0
         last_t = None
         fails = 0
@@ -135,30 +183,42 @@ class CameraTracker(BaseTracker):
                     time.sleep(0.02)
                     continue
                 fails = 0
-                period = 1.0 / (GAME_FPS if self.game_mode else MONITOR_FPS)
-                if t - last_proc < period * 0.9:
+                # In the background a lower rate is enough; in games and setup every frame counts.
+                if not self.game_mode and t - last_proc < 1.0 / MONITOR_FPS - 0.01:
                     continue
                 last_proc = t
                 if last_t is not None:
                     self.frame_dt = 0.9 * self.frame_dt + 0.1 * (t - last_t)
                 last_t = t
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                rgb.flags.writeable = False
-                res = mesh.process(rgb)
-                ear = None
-                if res.multi_face_landmarks:
-                    lm = res.multi_face_landmarks[0].landmark
-                    h, w = rgb.shape[:2]
-                    a = _ear(lm, RIGHT_EYE, w, h)
-                    b = _ear(lm, LEFT_EYE, w, h)
-                    if a is not None and b is not None:
-                        ear = (a + b) / 2.0
-                self.face_visible = ear is not None
-                self.detector.feed(t, ear)
-                self.monitor.on_frame(t, ear is not None)
+                openness = None
+                if landmarker is not None:
+                    ms = max(last_ms + 1, int((t - t_start) * 1000))
+                    last_ms = ms
+                    res = landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), ms)
+                    if res.face_blendshapes:
+                        sc = {c.category_name: c.score for c in res.face_blendshapes[0]}
+                        blink = (sc.get("eyeBlinkLeft", 0.0) + sc.get("eyeBlinkRight", 0.0)) / 2.0
+                        openness = 1.0 - blink
+                else:
+                    rgb.flags.writeable = False
+                    res = mesh.process(rgb)
+                    if res.multi_face_landmarks:
+                        lm = res.multi_face_landmarks[0].landmark
+                        h, w = rgb.shape[:2]
+                        a = _ear(lm, RIGHT_EYE, w, h)
+                        b = _ear(lm, LEFT_EYE, w, h)
+                        if a is not None and b is not None:
+                            openness = (a + b) / 2.0
+                self.face_visible = openness is not None
+                self.detector.feed(t, openness)
+                self.monitor.on_frame(t, openness is not None)
         finally:
             cap.release()
-            mesh.close()
+            if mesh is not None:
+                mesh.close()
+            if landmarker is not None:
+                landmarker.close()
 
 
 class SimTracker(BaseTracker):
@@ -187,6 +247,8 @@ class SimTracker(BaseTracker):
         """Space key: simulate the start of a blink."""
         now = time.perf_counter()
         self._close_until = now + 0.12
+        self.detector.count += 1
+        self.detector.marks.append(now)
         self._on_close(now + self._latency)
         self._on_blink(now, 0.12)
 
@@ -199,6 +261,10 @@ class SimTracker(BaseTracker):
         return 0.2 if self.eye_closed else 1.0
 
     def _run(self):
+        self.source = "test mode"
         while not self._stop.is_set():
-            self.monitor.on_frame(time.perf_counter(), True)
-            time.sleep(1 / 15)
+            t = time.perf_counter()
+            self.monitor.on_frame(t, True)
+            self.detector.baseline = 1.0
+            self.detector._remember(t, 0.2 if self.eye_closed else 1.0)
+            time.sleep(1 / 30)

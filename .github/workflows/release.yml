@@ -36,6 +36,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Download the face model
+        run: python tools/get_model.py
+
       - name: Run tests
         env:
           SDL_VIDEODRIVER: dummy
@@ -44,6 +47,7 @@ jobs:
 
       - name: Create icon
         run: python tools/make_icon.py
+
 
       - name: Build exe
         run: >
@@ -54,6 +58,7 @@ jobs:
           --add-data "assets/sprites;assets/sprites"
           --add-data "assets/sounds;assets/sounds"
           --add-data "assets/fonts;assets/fonts"
+          --add-data "assets/models;assets/models"
           --hidden-import pystray._win32
           main.py
 

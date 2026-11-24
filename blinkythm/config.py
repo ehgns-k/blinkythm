@@ -25,6 +25,7 @@ class Settings:
     cooldown_minutes: float = 30.0    # no prompts for this long after a game
     # environment
     camera_index: int = 0
+    blink_sensitivity: int = 1        # 0 low, 1 normal, 2 high
     respect_dnd: bool = True          # stay quiet during fullscreen apps and presentations
     monitoring: bool = True
     # game

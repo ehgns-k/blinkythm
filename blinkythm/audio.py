@@ -113,6 +113,7 @@ class Audio:
             pygame.mixer.pre_init(SR, -16, 1, 512)
             pygame.mixer.init()
             pygame.mixer.set_num_channels(16)
+            pygame.mixer.set_reserved(1)       # channel 0 is kept for looping tracks
             self.ok = True
         except Exception:
             self.ok = False
@@ -142,6 +143,18 @@ class Audio:
         snd = self._sound(buf)
         t0 = time.perf_counter()
         snd.play()
+        return t0
+
+    def play_loop(self, buf):
+        """Loop a buffer without gaps until stop() (calibration metronome).
+        Returns the time just before playback, or None without audio."""
+        if not self.ok:
+            return None
+        snd = self._sound(buf)
+        self._loop = snd                     # keep a reference while it plays
+        ch = pygame.mixer.Channel(0)
+        t0 = time.perf_counter()
+        ch.play(snd, loops=-1)
         return t0
 
     def play_stage(self, stage):

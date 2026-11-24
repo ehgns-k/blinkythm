@@ -79,6 +79,10 @@ class SettingsScreen(Screen):
             c.tracker.restart(s.camera_index)
             c.tracker.set_game_mode(True)
 
+        def sensitivity(d):
+            s.blink_sensitivity = max(0, min(2, s.blink_sensitivity + d))
+            c.tracker.set_sensitivity(s.blink_sensitivity)
+
         def offset(d):
             s.latency_offset = round(s.latency_offset + d * 0.005, 3)
 
@@ -103,6 +107,8 @@ class SettingsScreen(Screen):
             Row("Measure input delay", "action", change=lambda: c.go(SetupCalibScreen(c, standalone=True))),
             Row("Camera", "head"),
             self._num("Camera device", "camera_index", 0, 9, 1, "%d", after=camera_changed),
+            Row("Blink sensitivity", "num", get=lambda: s.blink_sensitivity, change=sensitivity,
+                show=lambda: SENS_NAMES[s.blink_sensitivity]),
             Row("Check the camera", "action", change=lambda: c.go(SetupCameraScreen(c, standalone=True))),
             Row("System", "head"),
             Row("Start with Windows", "bool", get=winenv.is_autostart, change=autostart,
@@ -274,13 +280,23 @@ class SetupScreen(Screen):
         return y
 
 
+SENS_NAMES = ["Low", "Normal", "High"]
+
+
 class SetupCameraScreen(SetupScreen):
+    """Shows live what the detector sees, so missed blinks are obvious and can be fixed on the spot."""
     step = 1
     heading = "Camera"
+    GRAPH = pygame.Rect(108, 50, 266, 64)
 
     def __init__(self, ctx, state=None, standalone=False):
         super().__init__(ctx, state, standalone)
         self.face_since = None
+        self.sel = 1                              # 0 device, 1 sensitivity
+        self.rows = []
+        self.start_count = ctx.tracker.detector.count
+        self.last_count = self.start_count
+        self.flash = -10.0
         if standalone:
             self.buttons = [G.Button("Done", "Enter", self.back_to_settings, primary=True)]
         else:
@@ -290,19 +306,37 @@ class SetupCameraScreen(SetupScreen):
     def _next(self):
         self.ctx.go(SetupCalibScreen(self.ctx, self.state))
 
+    def _change(self, d):
+        s, tr = self.ctx.settings, self.ctx.tracker
+        if self.sel == 0:
+            s.camera_index = max(0, min(9, s.camera_index + d))
+            tr.restart(s.camera_index)
+            tr.set_game_mode(True)
+        else:
+            s.blink_sensitivity = max(0, min(2, s.blink_sensitivity + d))
+            tr.set_sensitivity(s.blink_sensitivity)
+        s.save()
+        self.ctx.sound("ui_move")
+
     def key(self, k):
-        if k in (pygame.K_LEFT, pygame.K_RIGHT):
-            s = self.ctx.settings
-            s.camera_index = max(0, min(9, s.camera_index + (1 if k == pygame.K_RIGHT else -1)))
-            s.save()
-            self.ctx.tracker.restart(s.camera_index)
-            self.ctx.tracker.set_game_mode(True)
+        if k in (pygame.K_UP, pygame.K_DOWN):
+            self.sel = 1 - self.sel
             self.ctx.sound("ui_move")
-            return True
-        if k == pygame.K_ESCAPE:
+        elif k in (pygame.K_LEFT, pygame.K_RIGHT):
+            self._change(1 if k == pygame.K_RIGHT else -1)
+        elif k == pygame.K_ESCAPE:
             self.buttons[-1].press()
-            return True
-        return super().key(k)
+        else:
+            return super().key(k)
+        return True
+
+    def click(self, pos, right=False):
+        for i, r in enumerate(self.rows):
+            if r.collidepoint(pos):
+                self.sel = i
+                self._change(-1 if (pos[0] < r.centerx or right) else 1)
+                return True
+        return super().click(pos, right)
 
     def update(self, now):
         tr = self.ctx.tracker
@@ -311,40 +345,75 @@ class SetupCameraScreen(SetupScreen):
                 self.face_since = now
         else:
             self.face_since = None
+        c = tr.detector.count
+        if c != self.last_count:
+            self.last_count = c
+            self.flash = now
         if not self.standalone:
             self.buttons[0].enabled = self.face_since is not None and now - self.face_since > 1.0
 
+    def _graph(self, s, now):
+        g = self.GRAPH
+        det = self.ctx.tracker.detector
+        pygame.draw.rect(s, (24, 21, 46), g)
+        pygame.draw.rect(s, G.DUSK, g, 1)
+
+        def gy(ratio):
+            return g.bottom - 2 - round(max(0.0, min(1.2, ratio)) / 1.2 * (g.height - 4))
+
+        def gx(t):
+            return g.right - 2 - round((now - t) / 5.0 * (g.width - 4))
+
+        # threshold: below this line counts as closed
+        ty = gy(det.close_ratio)
+        for x in range(g.left + 2, g.right - 2, 4):
+            pygame.draw.line(s, G.PEACH, (x, ty), (x + 1, ty))
+        self.g.text(s, "closed", (g.left + 3, ty + 1), G.PEACH, "small")
+        for t in list(det.marks):
+            x = gx(t)
+            if g.left < x < g.right:
+                pygame.draw.line(s, G.MINT, (x, g.top + 2), (x, g.bottom - 3))
+        pts = [(gx(t), gy(r)) for t, r in list(det.history) if r is not None and gx(t) > g.left + 1]
+        if len(pts) > 1:
+            pygame.draw.lines(s, G.CREAM, False, pts)
+        self.g.text(s, "Eye openness, last 5 s", (g.left + 3, g.top + 1), G.HAZE, "small")
+
     def draw(self, s, now):
-        y = self.frame(s, ["Blinks are detected with your webcam. Video stays on this computer and is only used to "
-                           "measure how open your eyes are. Sit facing the screen in good light."])
-        tr = self.ctx.tracker
+        self.frame(s, ["Blink a few times at your normal pace. Each blink should add one to the counter. "
+                       "If some are missed, raise the sensitivity."])
+        tr, st = self.ctx.tracker, self.ctx.settings
         closed = tr.eye_closed
-        self.g.blit_sprite(s, "owl_me_closed" if closed else "owl_me_open", (64, 172), 4)
-        box = G.panel(s, (130, y + 4, 242, 120), (30, 27, 58), G.DUSK, light=(48, 44, 92))
-        x0, yy = box.left + 8, box.top + 7
+        self.g.blit_sprite(s, "owl_me_closed" if closed else "owl_me_open", (54, 108), 3)
+        n = tr.detector.count - self.start_count
+        hot = now - self.flash < 0.25
+        self.g.text(s, str(n), (54, 116), G.LAMP if hot else G.CREAM, "bold", "midtop", scale=2)
+        self.g.text(s, "blinks", (54, 148), G.FOG, "small", "midtop")
+        self._graph(s, now)
+        # controls
+        self.rows = []
+        y = 122
+        items = [("Camera device", "%d" % st.camera_index), ("Sensitivity", SENS_NAMES[st.blink_sensitivity])]
+        for i, (label, val) in enumerate(items):
+            r = pygame.Rect(108, y, 266, 13)
+            self.rows.append(r)
+            if i == self.sel:
+                pygame.draw.rect(s, (52, 48, 100), r)
+                pygame.draw.rect(s, G.LAMP, (r.left, r.top, 2, r.height))
+            self.g.text(s, label, (r.left + 8, y + 1), G.CREAM, "small")
+            vr = self.g.text(s, val, (r.right - 14, y + 1), G.LAMP if i == self.sel else G.CREAM, "small", "topright")
+            col = G.FOG if i == self.sel else G.DUSK
+            G.arrow(s, (vr.left - 6, y + 6), -1, col)
+            G.arrow(s, (r.right - 7, y + 6), 1, col)
+            y += 14
         msg, col = camera_text(tr, self.ctx.sim)
-        self.g.text(s, "Camera", (x0, yy), G.FOG, "small")
-        for i, part in enumerate(self.g.wrap(msg, 160, "small")[:2]):
-            self.g.text(s, part, (x0 + 64, yy + i * 12), col, "small")
-        yy += 26
-        self.g.text(s, "Device", (x0, yy), G.FOG, "small")
-        vr = self.g.text(s, "%d" % self.ctx.settings.camera_index, (x0 + 76, yy), G.CREAM, "small")
-        G.arrow(s, (x0 + 68, yy + 5), -1, G.FOG)
-        G.arrow(s, (vr.right + 6, yy + 5), 1, G.FOG)
-        yy += 15
         face = tr.face_visible and not tr.error
-        self.g.text(s, "Face", (x0, yy), G.FOG, "small")
-        self.g.text(s, "Found" if face else "Not visible", (x0 + 64, yy), G.MINT if face else G.PEACH, "small")
-        yy += 15
-        self.g.text(s, "Eyes open", (x0, yy), G.FOG, "small")
-        ratio = tr.ear_ratio
-        G.bar(s, (x0 + 64, yy + 3, 150, 6), 0 if ratio is None else ratio / 1.1, G.LAMP if not closed else G.PEACH)
-        yy += 16
-        for part in self.g.wrap("Blink once. The bar should drop and come back.", box.width - 16, "small"):
-            self.g.text(s, part, (x0, yy), G.HAZE, "small")
-            yy += 12
-        if self.ctx.sim:
-            self.g.text(s, "Test mode: Space = blink", (x0, yy), G.PEACH, "small")
+        status = msg if tr.error else ("%s · %s · %d fps" % (msg, tr.source or "starting", round(tr.fps))
+                                       if not self.ctx.sim else msg)
+        self.g.text(s, status[:58], (108, y + 3), col, "small")
+        if not face and not tr.error:
+            self.g.text(s, "Face not visible: sit facing the camera in good light.", (108, y + 15), G.PEACH, "small")
+        elif self.ctx.sim:
+            self.g.text(s, "Test mode: Space = blink", (108, y + 15), G.PEACH, "small")
         self.button_row(s)
 
 
@@ -352,8 +421,7 @@ class SetupCalibScreen(SetupScreen):
     """Blink along to a steady beat for as long as you like; the offset settles as blinks come in."""
     step = 2
     heading = "Timing"
-    LOOP_BEATS = 120                   # the metronome restarts after this many beats
-    RING = (192, 100, 38)              # centre x, centre y, radius
+    RING = (164, 114, 36)              # centre x, centre y, radius
 
     def __init__(self, ctx, state=None, standalone=False):
         super().__init__(ctx, state, standalone)
@@ -376,16 +444,15 @@ class SetupCalibScreen(SetupScreen):
         self.ctx.audio.stop()
 
     def _play(self):
-        n = self.LOOP_BEATS
-        ticks = [(k * R.CAL_BEAT, k % 4 == 0) for k in range(n)]
-        t0 = self.ctx.audio.play_track(ticks, [], n * R.CAL_BEAT)
+        # One bar (4 beats) looped by the mixer: sample-exact and it never runs out.
+        from ..audio import render_clicks
+        ticks = [(k * R.CAL_BEAT, k == 0) for k in range(4)]
+        buf = render_clicks(ticks, 4 * R.CAL_BEAT, self.ctx.audio.bank)[: int(round(4 * R.CAL_BEAT * 44100))]
+        t0 = self.ctx.audio.play_loop(buf)
         if t0 is None:
             return
         self.t0 = t0
-        if self.cal is None:
-            self.cal = R.Calibrator(t0)
-        else:
-            self.cal.t0 = t0
+        self.cal = R.Calibrator(t0)
 
     def _reset(self):
         if self.cal is not None:
@@ -425,8 +492,6 @@ class SetupCalibScreen(SetupScreen):
                 self.last = (time.perf_counter(), e)
 
     def update(self, now):
-        if self.t0 is not None and now - self.t0 >= self.LOOP_BEATS * R.CAL_BEAT:
-            self._play()
         ready = self.cal is not None and self.cal.state()[3]
         if self.ctx.audio.ok:
             self.buttons[0].enabled = ready
@@ -442,24 +507,52 @@ class SetupCalibScreen(SetupScreen):
         for i in range(96):
             a = 2 * math.pi * i / 96
             s.set_at((round(cx + r * math.sin(a)), round(cy - r * math.cos(a))), ring_col)
-        # the beat lands at the top
-        pygame.draw.polygon(s, G.LAMP, [(cx - 3, cy - r - 7), (cx + 3, cy - r - 7), (cx, cy - r - 3)])
+        # The tick sounds when the dot passes the small notch at the top (0 ms).
+        pygame.draw.line(s, G.FOG, (cx, cy - r - 3), (cx, cy - r + 3))
         if pulse > 0.3:
-            pygame.draw.circle(s, G.LAMP, (cx, cy - r), round(2 + 3 * pulse), 1)
-        # orbiting dot
+            pygame.draw.circle(s, G.FOG, (cx, cy - r), round(2 + 3 * pulse), 1)
         if self.t0 is not None:
             a = 2 * math.pi * phase
             pygame.draw.rect(s, G.CREAM, (round(cx + r * math.sin(a)) - 2, round(cy - r * math.cos(a)) - 2, 5, 5))
-        # where recent blinks landed: angle = error as a share of the beat
+        # Where recent blinks landed (angle = error as a share of the beat). Older marks fade.
         recent = self.cal.errors[-R.CAL_RECENT:] if self.cal else []
         good = self.cal.used() if self.cal else []
         for k, e in enumerate(recent):
             a = 2 * math.pi * e / R.CAL_BEAT
-            rr = r + 7
-            col = G.MINT if e in good else G.HAZE
+            age = len(recent) - 1 - k
             if k == len(recent) - 1:
-                col = G.LAMP
+                col = G.CREAM
+            elif e in good:
+                col = G.MINT if age < 6 else (70, 130, 110)
+            else:
+                col = G.HAZE if age < 6 else G.DUSK
+            rr = r + 5
             pygame.draw.rect(s, col, (round(cx + rr * math.sin(a)) - 1, round(cy - rr * math.cos(a)) - 1, 3, 3))
+        # The arrow is the offset that would be applied right now. It follows the running value,
+        # so you can watch it settle; the dim notch is the offset currently saved.
+        off_now = self.cal.state()[0] if self.cal else None
+        saved = self.ctx.settings.latency_offset
+        target = off_now if off_now is not None else saved
+        shown = getattr(self, "_shown", target)
+        dt = now - getattr(self, "_last_draw", now)
+        shown += (target - shown) * min(1.0, dt * 10)
+        self._shown, self._last_draw = shown, now
+        a = 2 * math.pi * saved / R.CAL_BEAT
+        pygame.draw.line(s, G.HAZE, (round(cx + (r + 10) * math.sin(a)), round(cy - (r + 10) * math.cos(a))),
+                         (round(cx + (r + 14) * math.sin(a)), round(cy - (r + 14) * math.cos(a))))
+        a = 2 * math.pi * shown / R.CAL_BEAT
+        sa, ca = math.sin(a), math.cos(a)
+        tip = (cx + (r + 9) * sa, cy - (r + 9) * ca)
+        base = (cx + (r + 17) * sa, cy - (r + 17) * ca)
+        side = (4 * ca, 4 * sa)
+        ready_now = self.cal is not None and self.cal.state()[3]
+        col = G.LAMP if ready_now or off_now is None else G.PEACH
+        pygame.draw.polygon(s, col, [(round(tip[0]), round(tip[1])),
+                                     (round(base[0] + side[0]), round(base[1] + side[1])),
+                                     (round(base[0] - side[0]), round(base[1] - side[1]))])
+        lx, ly = cx + (r + 26) * sa, cy - (r + 26) * ca
+        self.g.text(s, "%+d ms" % round(shown * 1000), (round(lx), round(ly)), col, "small",
+                    "midleft" if sa > 0.2 else ("midright" if sa < -0.2 else "midbottom"))
         # the eye in the middle shows what the camera sees
         closed = self.ctx.tracker.eye_closed
         G.eye_icon(s, (cx, cy), closed, G.LAMP if closed else G.FOG)
@@ -491,7 +584,7 @@ class SetupCalibScreen(SetupScreen):
         self.g.text(s, "Saved: %+d ms" % round(self.ctx.settings.latency_offset * 1000), (box.left, box.bottom + 4),
                     G.HAZE, "small")
         closed_owl = self.ctx.tracker.eye_closed
-        self.g.blit_sprite(s, "owl_me_closed" if closed_owl else "owl_me_open", (60, 160), 3)
+        self.g.blit_sprite(s, "owl_me_closed" if closed_owl else "owl_me_open", (40, 160), 3)
         if self.ctx.sim:
             self.g.text(s, "Test mode: Space = blink", (8, 181), G.PEACH, "small")
         self.button_row(s)
