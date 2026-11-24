@@ -34,6 +34,8 @@ class Settings:
     first_run_done: bool = False
     last_stage: str = ""              # 마지막으로 한 게임(알림에서 다음 게임을 고를 때 씀)
     records: dict = field(default_factory=dict)   # 게임 -> 최고 정확도(%)
+    stamps: int = 0                   # 지금까지 끝낸 판 수(도장판)
+    daily: dict = field(default_factory=dict)     # {"date", "plays", "rests"} 오늘 기록
 
     @classmethod
     def load(cls):
@@ -48,6 +50,8 @@ class Settings:
                     setattr(s, k, v)
             if not isinstance(s.records, dict):
                 s.records = {}
+            if not isinstance(s.daily, dict):
+                s.daily = {}
         except (OSError, ValueError):
             pass
         return s

@@ -333,6 +333,16 @@ def dull():
     return y
 
 
+def stamp_thud(rng):
+    """도장 찍는 소리: 낮은 쿵 + 종이 스치는 잡음."""
+    t = t_axis(0.18)
+    body = np.sin(2 * np.pi * (90 + 60 * np.exp(-t * 40)) * t) * env(len(t), 0.001, 26)
+    n = int(SR * 0.05)
+    paper = np.zeros(len(t))
+    paper[:n] = highpass(rng.standard_normal(n), 2000) * env(n, 0.0005, 70) * 0.4
+    return body + paper
+
+
 def mix_at(buf, y, sec, gain=1.0):
     i = int(round(sec * SR))
     j = min(len(buf), i + len(y))
@@ -442,6 +452,9 @@ def sounds():
         "desk_bell": norm(bell(2093, 0.7, 5), 0.7),       # 사진관 호출 종
         "shutter": norm(shutter(rng), 0.8),
         "dull": norm(dull(), 0.6),
+        "ui_move": norm(woodblock(900), 0.25),
+        "ui_ok": norm(jingle([72, 79], 0.05, 0.3), 0.35),
+        "stamp": norm(stamp_thud(rng), 0.7),
         "finish": norm(jingle([(60, 64, 67, 72)], 0.1, 1.4), 0.6),
         "jingle_great": norm(jingle([72, 76, 79, (72, 76, 79, 84)], 0.11), 0.6),
         "jingle_good": norm(jingle([67, 72, (67, 72, 76)], 0.13), 0.6),

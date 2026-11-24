@@ -32,6 +32,9 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Run tests
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
         run: python tests/test_core.py
 
       - name: Create icon
@@ -45,6 +48,7 @@ jobs:
           --collect-all mediapipe
           --add-data "assets/sprites;assets/sprites"
           --add-data "assets/sounds;assets/sounds"
+          --add-data "assets/fonts;assets/fonts"
           --hidden-import pystray._win32
           main.py
 

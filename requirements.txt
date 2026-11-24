@@ -1,5 +1,5 @@
 mediapipe==0.10.14
 numpy<2
-pygame
+pygame-ce>=2.5
 pystray
 pillow

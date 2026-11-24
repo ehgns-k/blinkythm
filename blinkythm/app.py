@@ -9,8 +9,7 @@ from .audio import Audio
 from .config import Settings
 from .monitor import UsageMonitor
 from .tracker import CameraTracker, SimTracker
-from .ui_common import setup_style, center_on, fmt_hms, bold_font
-from .ui_game import GameWindow
+from .ui_common import setup_style, center_on, fmt_hms
 from .ui_prompt import PromptDialog
 from .ui_wizard import Wizard
 
@@ -208,6 +207,8 @@ class App:
             self.root.iconify()
 
     def quit(self):
+        if self.game is not None:
+            self.game.close()
         try:
             if self.tray:
                 self.tray.stop()
@@ -268,17 +269,21 @@ class App:
             parent=self.root)
 
     # ------------------------------------------------------------------ 게임/마법사
-    def open_game(self, stage=None):
-        if self.game is not None:
-            self.game.lift()
+    def open_game(self, stage=None, from_prompt=False):
+        """게임 창(pygame-ce)을 연다. 창이 닫힐 때까지 그 안에서 Tk 이벤트도 함께 처리한다."""
+        if self.game is not None or self.wizard is not None:
             return
-        if self.wizard is not None:
-            return
-        self.game = GameWindow(self, stage)
-
-    def game_closed(self, win):
-        if self.game is win:
+        from .game.app import GameApp
+        self.game = GameApp(self, stage, from_prompt)
+        self.refresh_status()
+        try:
+            self.game.run()
+        finally:
             self.game = None
+            try:
+                self.refresh_status()
+            except tk.TclError:
+                pass
 
     def open_wizard(self):
         if self.wizard is not None or self.game is not None:
@@ -347,7 +352,7 @@ class App:
 
         def play():
             done()
-            self.open_game()
+            self.root.after(10, lambda: self.open_game(from_prompt=True))
 
         def snooze():
             self.monitor.snooze(time.perf_counter())

@@ -246,7 +246,7 @@ def test_feedback_and_combine():
     assert 1 <= len(lines) <= 3
     empty = R.make_summary({g: (5 if g == R.MISS else 0) for g in R.GRADES}, 5, [], 0, 0, [0.0, 0.0])
     assert "얼굴" in R.feedback(empty, ["가", "나"])[0]
-    assert R.rank_of(90) == "훌륭해요" and R.rank_level(10) == 3
+    assert R.rank_of(90) == "최고예요" and R.rank_level(10) == 3
 
 
 def test_next_stage_rotation():
@@ -280,6 +280,115 @@ def test_suggest_shift():
     for n in resp2[:12]:
         j2.on_blink(n.time + 0.005)
     assert R.suggest_offset_shift(j2.summary()) is None
+
+
+# --------------------------------------------------------------------- 게임 창(화면 없이 그려 보기)
+def _headless_game():
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    from blinkythm.tracker import SimTracker
+    from blinkythm.game.app import GameApp
+
+    class FakeApp:
+        def __init__(self):
+            self.settings = Settings()
+            self.settings.save = lambda: None
+            self.monitor = UsageMonitor(self.settings)
+            self.tracker = SimTracker(self.monitor)
+            self.audio = A.Audio(0.0)
+            self.opened_settings = 0
+
+        def show_main(self):
+            self.opened_settings += 1
+
+    fake = FakeApp()
+    g = GameApp(fake)
+    g.open(headless_size=(768, 432))
+    return fake, g
+
+
+def _frames(g, n=3, dt=0.02):
+    import time
+    for _ in range(n):
+        g.frame(time.perf_counter())
+        time.sleep(dt)
+
+
+def test_window_scale_fits_desktop():
+    from blinkythm.game import gfx as G
+    assert G.initial_window_size(1920, 1080) == (1536, 864)
+    assert G.initial_window_size(3840, 2160) == (3072, 1728)       # 4K: 8배
+    assert G.initial_window_size(1366, 768) == (768, 432)
+    assert G.fit_scale(1000, 600) == 2 and G.fit_scale(100, 100) == 1
+
+
+def test_game_screens_render_and_flow():
+    import pygame
+    from blinkythm.game import screens as SC
+    fake, g = _headless_game()
+    try:
+        _frames(g)
+        assert isinstance(g.screen, SC.HomeScreen)
+        g.screen.key(pygame.K_g)
+        _frames(g, 12)
+        assert isinstance(g.screen, SC.SelectScreen)
+        g.screen.key(pygame.K_RIGHT)
+        g.screen.key(pygame.K_RETURN)
+        _frames(g, 12)
+        assert isinstance(g.screen, SC.PlayScreen) and g.screen.stage.key == S.ORDER[1]
+        ps = g.screen
+        # 첫 노트에 맞춰 깜빡인 것으로 처리
+        n = ps.stage.notes[0]
+        ps.blink(n.time + 0.01)
+        assert ps.judge.matched[0].grade == R.PERFECT
+        _frames(g, 2)
+        # 곡 끝을 건너뛰어 결과로
+        ps.t0 -= ps.stage.seconds + 1
+        _frames(g, 14)
+        assert isinstance(g.screen, SC.ResultScreen)
+        assert fake.settings.stamps == 1 and g.daily()["plays"] == 1
+        assert fake.settings.last_stage == S.ORDER[1]
+        g.screen.t_enter -= 2
+        _frames(g, 2)
+        g.screen.key(pygame.K_RETURN)
+        _frames(g, 14)
+        assert isinstance(g.screen, SC.RestScreen)
+        g.screen.t_enter -= SC.REST_SECONDS + 0.1
+        _frames(g, 2)
+        assert g.screen.finished and g.daily()["rests"] == 1
+    finally:
+        g.shutdown()
+
+
+def test_medley_and_double_blink():
+    from blinkythm.game import screens as SC
+    fake, g = _headless_game()
+    try:
+        _frames(g)
+        # 홈에서 눈을 두 번 깜빡이면 추천 게임 시작
+        g._on_blink(10.0)
+        g._on_blink(10.3)
+        _frames(g, 14)
+        assert isinstance(g.screen, SC.PlayScreen)
+        g.screen.key(__import__("pygame").K_ESCAPE)
+        _frames(g, 14)
+        assert isinstance(g.screen, SC.SelectScreen)
+        g.start(list(S.ORDER))
+        _frames(g, 14)
+        for i in range(len(S.ORDER)):
+            ps = g.screen
+            assert isinstance(ps, SC.PlayScreen) and ps.stage.key == S.ORDER[i]
+            ps.t0 -= ps.stage.seconds + 1
+            _frames(g, 3)
+            if i < len(S.ORDER) - 1:
+                assert isinstance(g.screen, SC.InterludeScreen)
+                g.screen.t_enter -= SC.INTERLUDE + 0.1
+                _frames(g, 3)
+        _frames(g, 14)
+        assert isinstance(g.screen, SC.ResultScreen) and g.screen.medley
+        assert len(g.screen.sm["sections"]) == len(S.ORDER)
+    finally:
+        g.shutdown()
 
 
 if __name__ == "__main__":
