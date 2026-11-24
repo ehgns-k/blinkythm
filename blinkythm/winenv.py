@@ -20,15 +20,15 @@ def enable_dpi_awareness():
             pass
 
 
-def work_area(root):
-    """Usable area without the taskbar (left, top, right, bottom)."""
+def work_area(desktop_size):
+    """Usable area without the taskbar (left, top, right, bottom). desktop_size is the fallback (w, h)."""
     if IS_WIN:
         import ctypes
         from ctypes import wintypes
         r = wintypes.RECT()
         if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):
             return r.left, r.top, r.right, r.bottom
-    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight() - 40
+    return 0, 0, desktop_size[0], desktop_size[1] - 40
 
 
 def is_busy():

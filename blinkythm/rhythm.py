@@ -213,32 +213,54 @@ def suggest_offset_shift(summary, min_hits=10, min_shift=0.030):
 
 
 # --- calibration -------------------------------------------------------------
-CAL_BPM = 90.0
+# An open-ended loop: a metronome keeps ticking, the player blinks along for as long as they
+# like, and the offset is the running median of the most recent blinks.
+CAL_BPM = 60.0               # one blink per second is comfortable to keep up
 CAL_BEAT = 60.0 / CAL_BPM
-CAL_TICKS = 12
-CAL_SKIP = 4                 # the first 4 ticks are for listening
+CAL_RECENT = 16              # blinks used for the running value
+CAL_MIN_HITS = 8             # blinks needed before the value can be used
+CAL_MAX_SPREAD = 0.09        # spread (s) above which the value is not trusted
+CAL_OUTLIER = 0.15           # blinks further than this from the median are ignored
 
 
-def compute_offset(onsets, t0):
-    """Estimate input delay from blinks timed to the calibration metronome.
+def fold_to_beat(onset, t0, beat=CAL_BEAT):
+    """Distance from the nearest beat, in seconds (-beat/2 .. +beat/2). Positive = after the beat."""
+    rel = onset - t0
+    return ((rel + beat / 2) % beat) - beat / 2
 
-    People react to sound, so input usually lands after the beat. Fold by the beat period and take the median.
-    Returns (offset seconds, standard deviation, samples used) or None.
-    """
-    lo = -0.20
-    ds = []
-    for o in onsets:
-        rel = o - t0 - CAL_SKIP * CAL_BEAT
-        if rel < -0.2:
-            continue
-        ds.append(((rel - lo) % CAL_BEAT) + lo)
-    if len(ds) < 5:
-        return None
-    med = statistics.median(ds)
-    good = [d for d in ds if abs(d - med) <= 0.12]
-    if len(good) < 5:
-        return None
-    sd = statistics.pstdev(good)
-    if sd > 0.09:
-        return None
-    return statistics.median(good), sd, len(good)
+
+class Calibrator:
+    """Collects blinks against a steady beat and reports a running input delay."""
+
+    def __init__(self, t0, beat=CAL_BEAT):
+        self.t0 = t0
+        self.beat = beat
+        self.errors = []
+
+    def add(self, onset):
+        if onset < self.t0 - self.beat / 2:
+            return None
+        e = fold_to_beat(onset, self.t0, self.beat)
+        self.errors.append(e)
+        return e
+
+    def reset(self, t0=None):
+        self.errors = []
+        if t0 is not None:
+            self.t0 = t0
+
+    def used(self):
+        recent = self.errors[-CAL_RECENT:]
+        if not recent:
+            return []
+        med = statistics.median(recent)
+        return [e for e in recent if abs(e - med) <= CAL_OUTLIER]
+
+    def state(self):
+        """(offset, spread, count, ready). offset and spread are None until there are 3 usable blinks."""
+        good = self.used()
+        if len(good) < 3:
+            return None, None, len(good), False
+        off = statistics.median(good)
+        sd = statistics.pstdev(good)
+        return off, sd, len(good), len(good) >= CAL_MIN_HITS and sd <= CAL_MAX_SPREAD

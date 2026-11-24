@@ -1,6 +1,6 @@
-"""Game window (pygame-ce). Runs its own loop inside the Tk main loop and processes Tk events every frame.
+"""The main window. It stays alive while the app runs and is hidden to the tray instead of closed.
 
-The tray, prompt and settings stay in Tk; only the game is drawn in this window.
+Every screen (home, games, results, settings, setup) is drawn here on the 384x216 pixel screen.
 """
 import datetime
 import queue
@@ -11,94 +11,102 @@ import pygame
 from .. import stages as S
 from ..tracker import SimTracker
 from . import gfx as G
-from .screens import HomeScreen, PlayScreen
+from .screens import HomeScreen, PlayScreen, InterludeScreen
 
-FPS = 60
 FADE = 0.16
 DOUBLE_BLINK = (0.12, 0.70)          # gap that counts as a double blink (s)
 UI_SOUNDS = ["ui_move", "ui_ok", "stamp"]
 
 
-class GameApp:
-    def __init__(self, app, stage=None, from_prompt=False):
+class MainWindow:
+    def __init__(self, app, size=None):
         self.app = app
         self.settings = app.settings
         self.monitor = app.monitor
         self.tracker = app.tracker
         self.audio = app.audio
-        self.from_prompt = from_prompt
-        self.preselect = stage
         self.sim = isinstance(app.tracker, SimTracker)
-        self.gfx = None
-        self.window = None
-        self.base = None
+        self.from_prompt = False
+        self.preselect = None
+        desk = pygame.display.get_desktop_sizes()[0]
+        self._windowed = size or G.initial_window_size(*desk)
+        self.win = pygame.Window("Blinkythm", self._windowed, resizable=True, hidden=True)
+        self.win.minimum_size = (G.BASE_W, G.BASE_H)
+        self.win.get_surface()                     # sets the pixel format used by convert_alpha
+        self.gfx = G.Gfx()
+        try:
+            self.win.set_icon(self.gfx.sprite("owl_me_open", 2))
+        except pygame.error:
+            pass
+        self.base = pygame.Surface((G.BASE_W, G.BASE_H))
         self.presenter = G.Presenter()
-        self.screen = None
+        self.screen = HomeScreen(self)
         self._next = None
         self._fade_t = None
         self._blinks = queue.Queue()
         self._last_blink = None
-        self.running = False
+        self.visible = False
         self.fullscreen = False
-
-    # ------------------------------------------------------------------ lifecycle
-    def open(self, headless_size=None):
-        pygame.display.init()
-        pygame.font.init()
-        if headless_size:
-            self.window = pygame.display.set_mode(headless_size)
-        else:
-            desk = pygame.display.get_desktop_sizes()[0]
-            self._windowed = G.initial_window_size(*desk)
-            self.window = pygame.display.set_mode(self._windowed, pygame.RESIZABLE)
-        pygame.display.set_caption("Blinkythm")
-        self.gfx = G.Gfx()
-        try:
-            pygame.display.set_icon(self.gfx.sprite("owl_me_open", 2))
-        except pygame.error:
-            pass
-        self.base = pygame.Surface((G.BASE_W, G.BASE_H))
-        self.audio.volume = self.settings.volume
         self.audio.prepare(UI_SOUNDS)
-        self.tracker.set_game_mode(True)
         self.tracker.add_listener(self._blinks.put)
-        self.running = True
-        self.screen = HomeScreen(self)
-        self.screen.enter()
 
-    def shutdown(self):
-        if self.screen is not None:
-            self.screen.leave()
-        self.tracker.remove_listener(self._blinks.put)
+    # ------------------------------------------------------------------ showing and hiding
+    def show(self, screen=None):
+        if screen is not None:
+            self._set_screen(screen)
+        elif not self.visible and not isinstance(self.screen, HomeScreen):
+            self._set_screen(HomeScreen(self))
+        self.win.show()
+        self.win.focus()
+        self.visible = True
+        self.tracker.set_game_mode(True)
+
+    def hide(self):
+        if isinstance(self.screen, (PlayScreen, InterludeScreen)):
+            self.audio.stop()
+        self._set_screen(HomeScreen(self))
+        if self.fullscreen:
+            self.toggle_fullscreen()
+        self.win.hide()
+        self.visible = False
+        self.from_prompt = False
+        self.preselect = None
         self.tracker.set_game_mode(False)
-        self.audio.stop()
-        pygame.display.quit()
-        self.running = False
-
-    def run(self):
-        """Open the window and loop until it closes. Tk events are handled with root.update()."""
-        import tkinter as tk
-        self.open()
-        clock = pygame.time.Clock()
-        try:
-            while self.running:
-                self.frame()
-                clock.tick(FPS)
-                try:
-                    self.app.root.update()
-                except tk.TclError:       # the app was quit from the tray
-                    break
-        finally:
-            self.shutdown()
 
     def close(self):
-        self.running = False
+        """Close button or Esc on the home screen: back to the tray."""
+        self.app.hide_main()
+
+    def destroy(self):
+        self.tracker.remove_listener(self._blinks.put)
+        self.screen.leave()
+        self.win.destroy()
+
+    @property
+    def busy(self):
+        """True while blinks are deliberate (playing or calibrating), so they stay out of the statistics."""
+        from .system import SetupCalibScreen
+        return self.visible and isinstance(self.screen, (PlayScreen, InterludeScreen, SetupCalibScreen))
+
+    def open_game(self, stage=None, from_prompt=False):
+        self.preselect = stage
+        self.from_prompt = from_prompt
+        self.show(HomeScreen(self))
+
+    def _set_screen(self, screen):
+        self.screen.leave()
+        self.screen = screen
+        self._next = None
+        self._fade_t = None
+        self.screen.enter()
 
     # ------------------------------------------------------------------ one frame
     def frame(self, now=None):
         now = time.perf_counter() if now is None else now
-        for ev in pygame.event.get():
-            self.handle_event(ev)
+        if not self.visible:
+            while not self._blinks.empty():
+                self._blinks.get_nowait()
+            return
         while True:
             try:
                 onset = self._blinks.get_nowait()
@@ -107,9 +115,8 @@ class GameApp:
             self._on_blink(onset)
         if self._next is not None and (self._fade_t is None or now - self._fade_t >= FADE):
             self._swap()
-        if self.screen is not None:
-            self.screen.update(now)
-            self.screen.draw(self.base, now)
+        self.screen.update(now)
+        self.screen.draw(self.base, now)
         if self._fade_t is not None:
             k = (now - self._fade_t) / FADE
             a = k if self._next is not None else 1 - (k - 1)
@@ -117,28 +124,29 @@ class GameApp:
                 self._fade_t = None
             else:
                 G.alpha_fill(self.base, (0, 0, G.BASE_W, G.BASE_H), G.INK, int(255 * max(0, min(1, a))))
-        if self.window is not None:
-            self.presenter.present(self.window, self.base)
-            pygame.display.flip()
+        if self.visible:                    # a screen may have hidden the window during update
+            self.presenter.present(self.win.get_surface(), self.base)
+            self.win.flip()
 
     def handle_event(self, ev):
-        if ev.type == pygame.QUIT:
+        t = ev.type
+        if t == pygame.WINDOWCLOSE:
             self.close()
-        elif ev.type == pygame.KEYDOWN:
+        elif t == pygame.KEYDOWN:
             if ev.key == pygame.K_F11:
                 self.toggle_fullscreen()
             elif ev.key == pygame.K_SPACE and self.sim:
                 self.tracker.press()
-            elif self._next is None and self.screen is not None:
+            elif self._next is None:
                 self.screen.key(ev.key)
-        elif ev.type == pygame.MOUSEMOTION and self.screen is not None:
+        elif t == pygame.MOUSEMOTION:
             self.screen.hover(self.presenter.to_base(ev.pos))
-        elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and self.screen is not None and self._next is None:
-            self.screen.click(self.presenter.to_base(ev.pos))
+        elif t == pygame.MOUSEBUTTONDOWN and ev.button in (1, 3) and self._next is None:
+            self.screen.click(self.presenter.to_base(ev.pos), ev.button == 3)
+        elif t == pygame.MOUSEWHEEL and self._next is None:
+            self.screen.wheel(ev.y)
 
     def _on_blink(self, onset):
-        if self.screen is None:
-            return
         self.screen.blink(onset)
         last = self._last_blink
         self._last_blink = onset
@@ -149,9 +157,10 @@ class GameApp:
     def toggle_fullscreen(self):
         self.fullscreen = not self.fullscreen
         if self.fullscreen:
-            self.window = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            self.win.set_fullscreen(True)
         else:
-            self.window = pygame.display.set_mode(self._windowed, pygame.RESIZABLE)
+            self.win.set_windowed()
+            self.win.size = self._windowed
 
     # ------------------------------------------------------------------ screen changes
     def go(self, screen, fade=True):
@@ -171,7 +180,7 @@ class GameApp:
         first = keys.pop(0)
         self.go(PlayScreen(self, first, keys, []))
 
-    # ------------------------------------------------------------------ helpers
+    # ------------------------------------------------------------------ helpers used by screens
     def sound(self, name):
         self.audio.play_sfx(name)
 
@@ -179,7 +188,8 @@ class GameApp:
         return self.preselect or S.next_stage(self.settings.last_stage)
 
     def open_settings(self):
-        self.app.show_main()
+        from .system import SettingsScreen
+        self.go(SettingsScreen(self))
 
     def daily(self):
         today = datetime.date.today().isoformat()
@@ -220,6 +230,6 @@ class GameApp:
 
     def after_rest(self):
         if self.from_prompt:
-            self.close()
+            self.app.hide_main()
         else:
             self.go(HomeScreen(self))

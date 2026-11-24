@@ -255,19 +255,30 @@ def test_next_stage_rotation():
     assert S.next_stage(S.ORDER[0]) == S.ORDER[1]
 
 
-def test_calibration_offset():
+def test_calibrator_running_offset():
     rnd = random.Random(3)
     t0 = 50.0
     true_lag = 0.21                    # human reaction + device delay
-    beats = [t0 + k * R.CAL_BEAT for k in range(R.CAL_TICKS)]
-    onsets = [b + true_lag + rnd.gauss(0, 0.04) for b in beats[R.CAL_SKIP:]]
-    off, sd, n = R.compute_offset(onsets, t0)
-    assert abs(off - true_lag) < 0.03 and n >= 6
-    # erratic blinking fails
-    bad = [t0 + 3 + rnd.random() * 5 for _ in range(8)]
-    assert R.compute_offset(bad, t0) is None
-    # too few blinks fails
-    assert R.compute_offset(onsets[:3], t0) is None
+    c = R.Calibrator(t0)
+    for k in range(2, 7):
+        c.add(t0 + k * R.CAL_BEAT + true_lag + rnd.gauss(0, 0.04))
+    assert not c.state()[3]            # fewer than CAL_MIN_HITS blinks: not ready yet
+    for k in range(7, 14):
+        c.add(t0 + k * R.CAL_BEAT + true_lag + rnd.gauss(0, 0.04))
+    off, sd, n, ready = c.state()
+    assert ready and abs(off - true_lag) < 0.03 and n >= R.CAL_MIN_HITS
+    # one stray blink half a beat away is ignored
+    c.add(t0 + 20 * R.CAL_BEAT + 0.5)
+    assert abs(c.state()[0] - true_lag) < 0.03
+    # early blinks fold to negative values
+    assert R.fold_to_beat(t0 + 3 * R.CAL_BEAT - 0.1, t0) < 0
+    # erratic blinking never becomes ready
+    bad = R.Calibrator(t0)
+    for k in range(20):
+        bad.add(t0 + k * R.CAL_BEAT + rnd.uniform(-0.45, 0.45))
+    assert not bad.state()[3]
+    c.reset()
+    assert c.state() == (None, None, 0, False)
 
 
 def test_suggest_shift():
@@ -282,36 +293,32 @@ def test_suggest_shift():
     assert R.suggest_offset_shift(j2.summary()) is None
 
 
-# --------------------------------------------------------------------- game window (drawn without a display)
-def _headless_game():
+# --------------------------------------------------------------------- app and windows (drawn without a display)
+def _headless_app():
+    import tempfile
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
-    from blinkythm.tracker import SimTracker
-    from blinkythm.game.app import GameApp
-
-    class FakeApp:
-        def __init__(self):
-            self.settings = Settings()
-            self.settings.save = lambda: None
-            self.monitor = UsageMonitor(self.settings)
-            self.tracker = SimTracker(self.monitor)
-            self.audio = A.Audio(0.0)
-            self.opened_settings = 0
-
-        def show_main(self):
-            self.opened_settings += 1
-
-    fake = FakeApp()
-    g = GameApp(fake)
-    g.open(headless_size=(768, 432))
-    return fake, g
+    cfg = tempfile.mkdtemp()
+    os.environ["XDG_CONFIG_HOME"] = cfg         # keep test settings away from the real ones
+    os.environ["APPDATA"] = cfg
+    from blinkythm.app import App
+    app = App(sim=True, window_size=(768, 432), tray=False)
+    return app
 
 
-def _frames(g, n=3, dt=0.02):
+def _frames(app, n=3, dt=0.02):
     import time
     for _ in range(n):
-        g.frame(time.perf_counter())
+        app.step(time.perf_counter())
         time.sleep(dt)
+
+
+def _home(app):
+    from blinkythm.game.screens import HomeScreen
+    app.settings.first_run_done = True
+    app.window.show(HomeScreen(app.window))
+    _frames(app)
+    return app.window
 
 
 def test_window_scale_fits_desktop():
@@ -322,73 +329,165 @@ def test_window_scale_fits_desktop():
     assert G.fit_scale(1000, 600) == 2 and G.fit_scale(100, 100) == 1
 
 
+def test_first_run_setup():
+    import pygame
+    from blinkythm.game import system as SY
+    from blinkythm.game.screens import HomeScreen
+    app = _headless_app()
+    try:
+        w = app.window
+        _frames(app)
+        assert w.visible and isinstance(w.screen, SY.SetupCameraScreen)
+        assert not w.screen.buttons[0].enabled            # waits until a face has been seen for a moment
+        w.screen.face_since = 0.0
+        _frames(app, 2)
+        assert w.screen.buttons[0].enabled
+        w.screen.key(pygame.K_RETURN)
+        _frames(app, 14)
+        cal = w.screen
+        assert isinstance(cal, SY.SetupCalibScreen) and cal.cal is not None
+        assert w.busy                                     # calibration blinks stay out of the statistics
+        for k in range(1, 13):
+            cal.blink(cal.t0 + k * R.CAL_BEAT + 0.15 + (0.01 if k % 2 else -0.01))
+        _frames(app, 2)
+        assert cal.buttons[0].enabled
+        cal.key(pygame.K_RETURN)
+        _frames(app, 14)
+        assert isinstance(w.screen, SY.SetupFinishScreen)
+        w.screen.key(pygame.K_RETURN)
+        _frames(app, 14)
+        assert isinstance(w.screen, HomeScreen)
+        assert app.settings.first_run_done and abs(app.settings.latency_offset - 0.15) < 0.02
+    finally:
+        app.shutdown()
+
+
+def test_settings_screen():
+    import pygame
+    from blinkythm.game import system as SY
+    from blinkythm.game.screens import HomeScreen
+    app = _headless_app()
+    try:
+        w = _home(app)
+        w.screen.key(pygame.K_s)
+        _frames(app, 14)
+        st = w.screen
+        assert isinstance(st, SY.SettingsScreen)
+        assert st.rows[st.sel].label == "Screen time before checking"
+        before = app.settings.screen_minutes
+        st.key(pygame.K_RIGHT)
+        assert app.settings.screen_minutes == before + 1
+        for _ in range(6):                                # down to "Monitor blinking"
+            st.key(pygame.K_DOWN)
+        assert st.rows[st.sel].label == "Monitor blinking"
+        on = app.settings.monitoring
+        st.key(pygame.K_RETURN)
+        assert app.settings.monitoring is (not on)
+        for _ in range(30):                               # the list scrolls to the last row
+            st.key(pygame.K_DOWN)
+        _frames(app)
+        assert st.rows[st.sel].label == "Exit Blinkythm" and st.scroll > 0
+        st.key(pygame.K_ESCAPE)
+        _frames(app, 14)
+        assert isinstance(w.screen, HomeScreen)
+    finally:
+        app.shutdown()
+
+
+def test_reminder_popup_opens_game():
+    import pygame
+    import time
+    from blinkythm.game.screens import HomeScreen
+    app = _headless_app()
+    try:
+        w = _home(app)
+        w.hide()
+        assert not w.visible
+        app._show_prompt(time.perf_counter())
+        p = app.prompt
+        _frames(app, 2)
+        play = p.buttons[0]
+        click = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(play.rect.centerx * p.scale, play.rect.centery * p.scale))
+        p.handle_event(click)
+        assert not p.done                                 # not armed in the first moment
+        p.t_open -= 2
+        _frames(app)
+        p.handle_event(click)
+        _frames(app)
+        assert p.done and app.prompt is None
+        assert w.visible and w.from_prompt and isinstance(w.screen, HomeScreen)
+    finally:
+        app.shutdown()
+
+
 def test_game_screens_render_and_flow():
     import pygame
     from blinkythm.game import screens as SC
-    fake, g = _headless_game()
+    app = _headless_app()
     try:
-        _frames(g)
-        assert isinstance(g.screen, SC.HomeScreen)
+        g = _home(app)
         g.screen.key(pygame.K_g)
-        _frames(g, 12)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.SelectScreen)
         g.screen.key(pygame.K_RIGHT)
         g.screen.key(pygame.K_RETURN)
-        _frames(g, 12)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.PlayScreen) and g.screen.stage.key == S.ORDER[1]
+        assert g.busy
         ps = g.screen
         # treat it as a blink on the first note
         n = ps.stage.notes[0]
         ps.blink(n.time + 0.01)
         assert ps.judge.matched[0].grade == R.PERFECT
-        _frames(g, 2)
+        _frames(app, 2)
         # skip to the end of the track to reach the result
         ps.t0 -= ps.stage.seconds + 1
-        _frames(g, 14)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.ResultScreen)
-        assert fake.settings.stamps == 1 and g.daily()["plays"] == 1
-        assert fake.settings.last_stage == S.ORDER[1]
+        assert app.settings.stamps == 1 and g.daily()["plays"] == 1
+        assert app.settings.last_stage == S.ORDER[1]
         g.screen.t_enter -= 2
-        _frames(g, 2)
+        _frames(app, 2)
         g.screen.key(pygame.K_RETURN)
-        _frames(g, 14)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.RestScreen)
         g.screen.t_enter -= SC.REST_SECONDS + 0.1
-        _frames(g, 2)
+        _frames(app, 2)
         assert g.screen.finished and g.daily()["rests"] == 1
     finally:
-        g.shutdown()
+        app.shutdown()
 
 
 def test_medley_and_double_blink():
+    import pygame
     from blinkythm.game import screens as SC
-    fake, g = _headless_game()
+    app = _headless_app()
     try:
-        _frames(g)
+        g = _home(app)
         # a double blink on the home screen starts the suggested game
         g._on_blink(10.0)
         g._on_blink(10.3)
-        _frames(g, 14)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.PlayScreen)
-        g.screen.key(__import__("pygame").K_ESCAPE)
-        _frames(g, 14)
+        g.screen.key(pygame.K_ESCAPE)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.SelectScreen)
         g.start(list(S.ORDER))
-        _frames(g, 14)
+        _frames(app, 14)
         for i in range(len(S.ORDER)):
             ps = g.screen
             assert isinstance(ps, SC.PlayScreen) and ps.stage.key == S.ORDER[i]
             ps.t0 -= ps.stage.seconds + 1
-            _frames(g, 3)
+            _frames(app, 3)
             if i < len(S.ORDER) - 1:
                 assert isinstance(g.screen, SC.InterludeScreen)
                 g.screen.t_enter -= SC.INTERLUDE + 0.1
-                _frames(g, 3)
-        _frames(g, 14)
+                _frames(app, 3)
+        _frames(app, 14)
         assert isinstance(g.screen, SC.ResultScreen) and g.screen.medley
         assert len(g.screen.sm["sections"]) == len(S.ORDER)
     finally:
-        g.shutdown()
+        app.shutdown()
 
 
 if __name__ == "__main__":

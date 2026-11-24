@@ -129,7 +129,11 @@ class Gfx:
         key = (name, scale)
         if key not in self._sprites:
             try:
-                img = pygame.image.load(os.path.join(self._sprite_dir, name + ".png")).convert_alpha()
+                img = pygame.image.load(os.path.join(self._sprite_dir, name + ".png"))
+                try:
+                    img = img.convert_alpha()
+                except pygame.error:            # no window yet; the plain image works too
+                    pass
                 self._sprites[key] = pygame.transform.scale_by(img, scale) if scale > 1 else img
             except (OSError, pygame.error, FileNotFoundError):
                 img = pygame.Surface((8 * scale, 8 * scale), pygame.SRCALPHA)
@@ -168,12 +172,34 @@ def keycap(gfx, surf, label, pos, anchor="midleft", fg=INK, bg=FOG):
 
 
 class Button:
-    def __init__(self, label, key_label, action, primary=False):
+    def __init__(self, label, key_label, action, primary=False, enabled=True):
         self.label = label
         self.key_label = key_label
         self.action = action
         self.primary = primary
+        self.enabled = enabled
         self.rect = pygame.Rect(0, 0, 0, 0)
+
+    def press(self):
+        if self.enabled:
+            self.action()
+            return True
+        return False
+
+    def draw_plain(self, gfx, surf, rect, focused):
+        """Button without a key hint (for mouse-only places such as the reminder popup)."""
+        self.rect = pygame.Rect(rect)
+        r = self.rect
+        if not self.enabled:
+            fill, edge, fg = NIGHT, DUSK, HAZE
+        elif focused:
+            fill, edge, fg = LAMP, INK, INK
+        elif self.primary:
+            fill, edge, fg = CREAM, INK, INK
+        else:
+            fill, edge, fg = NIGHT, DUSK, CREAM
+        panel(surf, r, fill, edge)
+        gfx.text(surf, self.label, (r.centerx, r.centery - 1), fg, "bold", "center")
 
     def measure(self, gfx):
         return gfx.width(self.label, "bold") + gfx.width(self.key_label, "small") + 22
@@ -182,6 +208,11 @@ class Button:
         self.rect = pygame.Rect(rect)
         lift = 0 if focused else 1
         r = self.rect.move(0, lift)
+        if not self.enabled:
+            panel(surf, r, NIGHT, DUSK)
+            gfx.text(surf, self.label, (r.left + 6, r.centery - 1), HAZE, "bold", "midleft")
+            keycap(gfx, surf, self.key_label, (r.right - 5, r.centery), "midright", fg=NIGHT, bg=DUSK)
+            return
         if self.primary or focused:
             fill, edge, fg = (LAMP, INK, INK) if focused else (CREAM, INK, INK)
         else:
@@ -268,3 +299,23 @@ def alpha_fill(surf, rect, color, alpha):
     s = pygame.Surface(pygame.Rect(rect).size, pygame.SRCALPHA)
     s.fill((*color, alpha))
     surf.blit(s, pygame.Rect(rect).topleft)
+
+
+def toggle(surf, pos, on, focused=False):
+    """Pixel on/off switch, 17x9, anchored at its right edge."""
+    x, y = pos
+    r = pygame.Rect(x - 17, y, 17, 9)
+    pygame.draw.rect(surf, MINT if on else DUSK, r.inflate(0, -2))
+    pygame.draw.rect(surf, MINT if on else DUSK, r.inflate(-2, 0))
+    knob = pygame.Rect(0, 0, 7, 7)
+    knob.midleft = (r.left + 1, r.centery) if not on else (r.right - 8, r.centery)
+    pygame.draw.rect(surf, CREAM if focused else PAPER, knob)
+    return r
+
+
+def arrow(surf, center, direction, color):
+    """Small 3x5 arrow pointing left (-1) or right (1)."""
+    x, y = center
+    for i in range(3):
+        xx = x + i * direction
+        pygame.draw.line(surf, color, (xx, y - (2 - i)), (xx, y + (2 - i)))

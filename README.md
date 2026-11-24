@@ -15,11 +15,11 @@ License: [MIT](LICENSE). Windows builds are set up to be signed through SignPath
     pip install -r requirements.txt
     python main.py
 
-On first run a setup wizard checks the camera, measures input delay and sets a few options. After that the app lives in the tray. `Blinkythm.bat` starts it without a console window.
+On first run, three setup screens check the camera, measure input delay and set a few options. After that the app lives in the tray. `Blinkythm.bat` starts it without a console window.
 
 Test options:
 
-- `--sim`: no camera. Space stands in for a blink in the game and the wizard.
+- `--sim`: no camera. Space stands in for a blink.
 - `--demo`: the prompt appears after 12 seconds of screen time. Settings are not saved.
 - `--background`: start hidden (used by autostart).
 
@@ -48,21 +48,33 @@ Test options:
 - The result screen shows a stamp, accuracy, grade counts, accuracy per section (per game in the medley) and the timing spread, plus a line on your strongest and weakest section. Best scores are saved per game.
 - Every finished game adds a stamp to the 10-slot card on the home screen. There are no daily streaks.
 
-## Game window
+## Windows
 
-The game window uses pygame-ce. Everything is drawn on a 384x216 pixel screen and scaled by the largest whole number that fits the window. The first size is the largest multiple that fits in 80% of the monitor: 4x (1536x864) on 1920x1080 and 8x (3072x1728) on 3840x2160. Resizing the window rescales it, with dark bars filling the rest. F11 toggles fullscreen. Text uses the Galmuri bitmap font, so letters sit on the same pixel grid as the art.
+Everything is drawn with pygame-ce in one style: the main window, the setup screens, settings and the reminder popup. Only the tray menu is a standard Windows menu.
 
-Flow: prompt, home, (game select), play, result, 20 s rest, then home. When the game was opened from the prompt, the window closes after the rest.
+The main window draws on a 384x216 pixel screen and scales it by the largest whole number that fits. The first size is the largest multiple that fits in 80% of the monitor: 4x (1536x864) on 1920x1080 and 8x (3072x1728) on 3840x2160. Resizing rescales it, with dark bars filling the rest. F11 toggles fullscreen. Text uses the Galmuri bitmap font, so letters sit on the same pixel grid as the art. Closing the window hides it to the tray; Exit is in the tray menu and at the bottom of Settings.
+
+Flow: reminder, home, (game select), play, result, 20 s rest, then home. When the game was opened from the reminder, the window goes back to the tray after the rest.
 
 | Screen | Keys |
 |---|---|
-| Home | Enter play today's game, G games, S settings window, Esc close |
+| Home | Enter play today's game, G games, S settings, Esc hide to tray |
 | Game select | Left/Right choose, Enter play, M medley, Esc back |
 | Play | Esc stop |
 | Result | Enter rest your eyes, R again, G games, A apply the suggested offset |
 | Rest | Esc skip (not counted as a rest) |
+| Settings | Up/Down choose, Left/Right change, Enter toggle or open, Esc back |
+| Setup | Enter next, Esc back; Left/Right change the camera on the camera screen; R resets the timing screen |
 
-Buttons and game tiles also work with the mouse. The tray, prompt, settings window and calibration wizard are classic Tk windows. While the game window is open it runs its own 60 fps loop inside the Tk main loop and processes Tk events every frame, so the tray menu and settings still respond.
+Buttons, game tiles and settings rows also work with the mouse. The reminder is a small borderless window in the corner of the screen. It does not take keyboard focus and only reacts to the mouse.
+
+The app runs a single loop: 60 fps while a window is visible, 15 fps while it waits in the tray.
+
+## Timing calibration
+
+The timing screen works like the calibration in many rhythm games: a metronome keeps ticking at 60 BPM, one tick per second, and you blink along for as long as you like. A dot circles a ring once per beat and reaches the top on the tick. Each blink leaves a mark on the ring at the point where it landed, so early and late blinks show up on either side of the top.
+
+The offset is the median of the last 16 blinks, ignoring blinks more than 150 ms from that median. It can be used once 8 blinks agree within a spread of 90 ms. R starts over. You can measure again at any time from Settings.
 
 ## When the prompt appears
 
@@ -87,7 +99,7 @@ The input time is the moment your eyes start to close. The detector interpolates
 | Miss | further | 0 |
 
 - The windows are wider than in keyboard rhythm games because of the webcam frame interval and because people vary more when timing a blink. Cameras slower than 30 fps get wider windows automatically.
-- Webcam and audio delay differ between devices. In the wizard you blink along to 8 metronome ticks; the median error, folded by the beat period, is saved as the offset. Uneven results are rejected.
+- Webcam and audio delay differ between devices. The timing screen measures the delay (see Timing calibration) and saves it as the offset.
 - Normal blinks off the beat are not penalised. A blink that is not within 200 ms of any note is ignored and only counted on the result screen.
 - One blink matches at most one note: the nearest one not yet judged. Notes are at least 0.5 s apart in every game, so a blink cannot land on the wrong note (covered by the tests).
 - A good hit plays the game's own sound (ship bell, your owl's hoot, the shutter). A Close plays it quietly with a dull thud.
@@ -109,11 +121,13 @@ Video is used in memory to find eye landmarks and is never saved or sent. The ap
     blinkythm/rhythm.py        judging, section scores, calibration
     blinkythm/audio.py         WAV loading, rendering a game's audio, playback (pygame-ce)
     blinkythm/tracker.py       webcam and MediaPipe, fake tracker for tests
-    blinkythm/game/app.py      game window: setup, scaling, input, screen changes, running inside Tk
+    blinkythm/app.py           main loop, tray icon, reminder scheduling
+    blinkythm/game/window.py   main window: scaling, input, screen changes, show and hide
     blinkythm/game/gfx.py      pixel screen, palette, fonts, boxes, buttons, key hints
     blinkythm/game/screens.py  home, game select, play, medley break, result, rest
     blinkythm/game/scenes.py   the three game scenes
-    blinkythm/ui_*.py          main window (status/settings), prompt, wizard (Tk)
+    blinkythm/game/system.py   settings and the setup screens (camera, timing, finish)
+    blinkythm/game/prompt.py   reminder popup
     blinkythm/winenv.py        work area, fullscreen detection, autostart
     assets/sprites/*.png       pixel art at 1x (drawn at 2x to 4x in the game)
     assets/sounds/*.wav        effects, cues and backing loops (44.1 kHz, 16-bit, mono)
@@ -171,5 +185,6 @@ The exe is built with PyInstaller (GPL 2.0 or later with an exception that allow
 
 - The development machine has no webcam and no Windows. Detection was tested with synthetic EAR series (30 and 15 fps, device delay, noise), and the screens and flow on a Linux virtual display with keyboard input. On Windows, only the window size calculation for high-DPI monitors was tested.
 - Glasses glare, a tilted or turned head and dim light make EAR noisy and lower detection. The open-eye baseline adapts to the last 30 seconds.
-- Bluetooth headphones add large, unstable delay. The wizard's spread check rejects such measurements.
+- Bluetooth headphones add large, unstable delay. The timing screen will not accept a measurement until the spread is small.
+- The reminder uses an SDL setting so that showing it does not take keyboard focus. This could not be checked on Windows here.
 - With no audio device on the development machine, the music and effects were checked only by their waveforms (length, peak level, cue positions). The mix still needs a listen on real speakers.

@@ -51,8 +51,8 @@ class Screen:
         elif k in (pygame.K_RIGHT, pygame.K_DOWN, pygame.K_TAB):
             self._move(1)
         elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            self.ctx.sound("ui_ok")
-            self.buttons[self.focus].action()
+            if self.buttons[self.focus].press():
+                self.ctx.sound("ui_ok")
         else:
             return False
         return True
@@ -67,21 +67,23 @@ class Screen:
                 self.focus = i
                 self.ctx.sound("ui_move")
 
-    def click(self, pos):
+    def click(self, pos, right=False):
         for b in self.buttons:
             if b.rect.collidepoint(pos):
-                self.ctx.sound("ui_ok")
-                b.action()
+                if b.press():
+                    self.ctx.sound("ui_ok")
                 return True
         return False
+
+    def wheel(self, dy):
+        pass
 
     def blink(self, onset):
         pass
 
     def double_blink(self):
-        if self.accepts_double_blink and self.buttons:
+        if self.accepts_double_blink and self.buttons and self.buttons[0].press():
             self.ctx.sound("ui_ok")
-            self.buttons[0].action()
 
     # drawing
     def draw(self, s, now):
@@ -243,8 +245,8 @@ class SelectScreen(Screen):
         elif k == pygame.K_ESCAPE:
             self.ctx.go(HomeScreen(self.ctx))
         elif k in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            self.ctx.sound("ui_ok")
-            self.buttons[self.focus].action()
+            if self.buttons[self.focus].press():
+                self.ctx.sound("ui_ok")
         elif k in (pygame.K_TAB, pygame.K_UP, pygame.K_DOWN):
             self._move(1 if k != pygame.K_UP else -1)
         else:
@@ -258,14 +260,14 @@ class SelectScreen(Screen):
                 self.ctx.sound("ui_move")
         super().hover(pos)
 
-    def click(self, pos):
+    def click(self, pos, right=False):
         for i, r in enumerate(self.tiles):
             if r.collidepoint(pos):
                 self.sel = i
                 self.ctx.sound("ui_ok")
                 self._start()
                 return True
-        return super().click(pos)
+        return super().click(pos, right)
 
     def draw(self, s, now):
         s.fill((34, 30, 68))
