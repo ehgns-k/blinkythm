@@ -59,6 +59,7 @@ class MainWindow:
         self.win.show()
         self.win.focus()
         self.visible = True
+        self.audio.music(self.screen.music)
         self.tracker.set_game_mode(True)
 
     def hide(self):
@@ -67,6 +68,7 @@ class MainWindow:
         self._set_screen(HomeScreen(self))
         if self.fullscreen:
             self.toggle_fullscreen()
+        self.audio.music(None)
         self.win.hide()
         self.visible = False
         self.from_prompt = False
@@ -99,6 +101,8 @@ class MainWindow:
         self._next = None
         self._fade_t = None
         self.screen.enter()
+        if self.visible:
+            self.audio.music(self.screen.music)
 
     # ------------------------------------------------------------------ one frame
     def frame(self, now=None):
@@ -171,6 +175,7 @@ class MainWindow:
         self.screen.leave()
         self.screen = self._next
         self._next = None
+        self.audio.music(self.screen.music)
         self.screen.enter()
         if self._fade_t is not None:
             self._fade_t = time.perf_counter() - FADE     # continue with the fade-in

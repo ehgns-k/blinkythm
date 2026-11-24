@@ -13,7 +13,8 @@ LANE_X0, LANE_X1, LANE_Y0, LANE_Y1 = 40, 372, 176, 206
 REST_SECONDS = 20
 INTERLUDE = 3.5
 STAMP_SLOTS = 10
-JINGLES = ["jingle_great", "jingle_good", "jingle_try", "jingle_try"]
+JINGLES = ["jingle_great", "jingle_good", "jingle_try", "jingle_try"]          # music roles, by rank level
+RESULT_MUSIC = ["result_great", "result_good", "result_try", "result_try"]
 
 
 def fmt_minutes(sec):
@@ -24,6 +25,7 @@ def fmt_minutes(sec):
 class Screen:
     title = ""
     accepts_double_blink = False
+    music = None            # background music role while this screen is shown (None = silence)
 
     def __init__(self, ctx):
         self.ctx = ctx
@@ -118,6 +120,7 @@ class Screen:
 # ====================================================================== home
 class HomeScreen(Screen):
     accepts_double_blink = True
+    music = "home"
     STARS = G.stars(5, (0, 0, G.BASE_W, 120), 60)
     HOUSES = [(108, 18, 16), (130, 14, 22), (150, 20, 14), (176, 12, 12)]
 
@@ -217,6 +220,7 @@ class HomeScreen(Screen):
 # ====================================================================== game select
 class SelectScreen(Screen):
     accepts_double_blink = True
+    music = "select"
     TILE_BG = {"lighthouse": ((16, 28, 64), (20, 56, 104)), "owls": ((30, 24, 64), (36, 34, 78)),
                "photo": ((226, 210, 178), (150, 104, 70))}
     HERO = {"lighthouse": "lighthouse_on", "owls": "owl_me_open", "photo": "camera_open"}
@@ -493,8 +497,7 @@ class InterludeScreen(Screen):
 
     def enter(self):
         super().enter()
-        stage, sm = self.played[-1]
-        self.ctx.audio.play_jingle(JINGLES[R.rank_level(sm["accuracy"])])
+        self.ctx.audio.play_jingle("jingle_medley")
 
     def key(self, k):
         if k == pygame.K_ESCAPE:
@@ -549,6 +552,7 @@ class ResultScreen(Screen):
             G.Button("Games", "G", lambda: ctx.go(SelectScreen(ctx))),
         ]
         self.stamped = False
+        self.music_at = None
 
     def key(self, k):
         if k == pygame.K_r:
@@ -565,10 +569,15 @@ class ResultScreen(Screen):
         return True
 
     def update(self, now):
+        level = R.rank_level(self.sm["accuracy"])
         if not self.stamped and now - self.t_enter > 0.45:
             self.stamped = True
             self.ctx.sound("stamp")
-            self.ctx.audio.play_jingle(JINGLES[R.rank_level(self.sm["accuracy"])])
+            # the rank jingle first, then that rank's music in the background
+            self.music_at = now + self.ctx.audio.play_jingle(JINGLES[level]) - 0.3
+        if self.music_at is not None and now >= self.music_at:
+            self.music_at = None
+            self.ctx.audio.music(RESULT_MUSIC[level], fade_ms=1200)
 
     def draw(self, s, now):
         sm = self.sm
@@ -652,6 +661,7 @@ def keycap(gfx, s, label, pos):
 # ====================================================================== look-far-away rest
 class RestScreen(Screen):
     CLOUDS = [(30, 40, 26), (150, 30, 34), (260, 50, 22), (340, 34, 28)]
+    music = "rest"
 
     def __init__(self, ctx):
         super().__init__(ctx)

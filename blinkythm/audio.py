@@ -1,8 +1,11 @@
-"""Sound: renders a whole game from the WAV files in assets/sounds and plays it, plus hit sounds on demand.
+"""Sound: games, background music, jingles and effects.
 
-The backing loop and cue sounds are mixed into one buffer and played at once, so a slow frame cannot shift the beat.
-Rendering (render_*) works without pygame, so the tests use it directly.
+A game is rendered into one stereo buffer before it starts: its song from assets/music, aligned so
+that beat 0 of the chart falls on the song's first downbeat, plus the count-in and every cue sound.
+It is played in one go, so a slow frame cannot shift the beat. Menu screens stream their music with
+pygame's music player. Rendering (render_*) works without a sound device, so the tests use it directly.
 """
+import json
 import os
 import sys
 import time
@@ -25,20 +28,52 @@ def assets_dir():
     return os.path.join(base, "assets")
 
 
+def music_dir():
+    return os.path.join(assets_dir(), "music")
+
+
+_manifest = None
+
+
+def music_manifest():
+    """Role -> info from assets/music/music.json (file, bpm and downbeat for game songs)."""
+    global _manifest
+    if _manifest is None:
+        try:
+            with open(os.path.join(music_dir(), "music.json"), encoding="utf-8") as f:
+                _manifest = json.load(f)["roles"]
+        except (OSError, ValueError, KeyError):
+            _manifest = {}
+    return _manifest
+
+
 def load_wav(path):
+    """16-bit 44.1 kHz WAV -> float array of shape (n, 2)."""
     with wave.open(path, "rb") as w:
         if w.getsampwidth() != 2 or w.getframerate() != SR:
             raise ValueError("Only 44.1 kHz 16-bit WAV is supported: %s" % path)
         raw = w.readframes(w.getnframes())
         ch = w.getnchannels()
-    y = np.frombuffer(raw, dtype="<i2").astype(np.float64) / 32768.0
-    if ch > 1:
-        y = y.reshape(-1, ch).mean(axis=1)
-    return y
+    y = np.frombuffer(raw, dtype="<i2").astype(np.float64).reshape(-1, ch) / 32768.0
+    if ch == 1:
+        y = np.repeat(y, 2, axis=1)
+    return y[:, :2]
+
+
+def load_ogg(path):
+    """Decode an OGG file with pygame's mixer -> float array of shape (n, 2)."""
+    if not _HAVE_PYGAME:
+        raise OSError("pygame is needed to decode %s" % path)
+    if not pygame.mixer.get_init():
+        pygame.mixer.init(SR, -16, 2, 512)
+    a = pygame.sndarray.array(pygame.mixer.Sound(path)).astype(np.float64) / 32768.0
+    if a.ndim == 1:
+        a = np.repeat(a[:, None], 2, axis=1)
+    return a[:, :2]
 
 
 class SampleBank:
-    """Name -> samples (numpy), loaded on first use."""
+    """Effects by name (assets/sounds/*.wav) and music by role (assets/music/*.ogg), loaded on first use."""
 
     def __init__(self, folder=None):
         self.folder = folder or os.path.join(assets_dir(), "sounds")
@@ -52,8 +87,18 @@ class SampleBank:
             try:
                 self._cache[name] = load_wav(self.path(name))
             except (OSError, ValueError, EOFError):
-                self._cache[name] = np.zeros(1)
+                self._cache[name] = np.zeros((1, 2))
         return self._cache[name]
+
+    def music(self, role):
+        key = "music:" + role
+        if key not in self._cache:
+            info = music_manifest().get(role)
+            try:
+                self._cache[key] = load_ogg(os.path.join(music_dir(), info["file"]))
+            except Exception:
+                self._cache[key] = np.zeros((1, 2))
+        return self._cache[key]
 
 
 def _mix_into(buf, y, at_sec, gain=1.0):
@@ -66,21 +111,26 @@ def _mix_into(buf, y, at_sec, gain=1.0):
 
 
 def render_stage(stage, bank):
-    """One game's audio: 4-beat count-in -> repeated backing loop + cues -> closing chord."""
+    """One game's audio: the song from its first downbeat, the 4-beat count-in and the cues.
+    Chart beat b sounds at b * beat_sec seconds into the buffer."""
     bs = stage.beat_sec
     from .stages import COUNT_IN
-    buf = np.zeros(int((stage.total_beats * bs + 1.6) * SR))
+    total = stage.total_beats * bs
+    buf = np.zeros((int((total + 0.2) * SR), 2))
+    info = music_manifest().get(stage.song, {})
+    song = bank.music(stage.song) if info else np.zeros((1, 2))
+    start = int(round(info.get("first_downbeat", 0.0) * SR))
+    seg = song[start: start + len(buf)].copy()
+    if len(seg):
+        fade_in = min(len(seg), int(0.03 * SR))
+        seg[:fade_in] *= np.linspace(0, 1, fade_in)[:, None]
+        # fade out over the tail after the last bar
+        a = int(stage.length * bs * SR)
+        if a < len(seg):
+            seg[a:] *= np.linspace(1, 0, len(seg) - a)[:, None]
+        buf[: len(seg)] += seg
     for b in range(COUNT_IN):
-        _mix_into(buf, bank.get("count_accent" if b == 0 else "count"), b * bs, 0.8)
-    loop = bank.get(stage.loop)
-    loop_beats = 8
-    b = COUNT_IN
-    while b < stage.length:
-        # Each loop start is computed from the beat again, so rounding errors do not add up
-        seg = loop[: int(round(min(loop_beats, stage.length - b) * bs * SR))]
-        _mix_into(buf, seg, b * bs)
-        b += loop_beats
-    _mix_into(buf, bank.get("finish"), stage.length * bs, 0.9)
+        _mix_into(buf, bank.get("count_accent" if b == 0 else "count"), b * bs, 0.7)
     for c in stage.cues:
         _mix_into(buf, bank.get(c.sound), c.beat * bs)
     peak = float(np.max(np.abs(buf))) if len(buf) else 0.0
@@ -90,15 +140,16 @@ def render_stage(stage, bank):
 
 
 def render_clicks(ticks, total_sec, bank):
-    """Metronome for the calibration wizard. ticks: [(seconds, accented)]"""
-    buf = np.zeros(int((total_sec + 0.5) * SR))
+    """Metronome for calibration. ticks: [(seconds, accented)]"""
+    buf = np.zeros((int((total_sec + 0.5) * SR), 2))
     for s, acc in ticks:
         _mix_into(buf, bank.get("count_accent" if acc else "count"), s, 0.8)
     return buf
 
 
 def to_bytes(y, volume=1.0):
-    return (np.clip(y * volume, -1, 1) * 32767).astype("<i2").tobytes()
+    """Float samples (n, 2) -> interleaved 16-bit stereo bytes."""
+    return np.ascontiguousarray(np.clip(y * volume, -1, 1) * 32767).astype("<i2").tobytes()
 
 
 class Audio:
@@ -107,10 +158,12 @@ class Audio:
         self.ok = False
         self.bank = SampleBank()
         self._sfx = {}
+        self._music_role = None
+        self._loop = None
         if not _HAVE_PYGAME:
             return
         try:
-            pygame.mixer.pre_init(SR, -16, 1, 512)
+            pygame.mixer.pre_init(SR, -16, 2, 512)
             pygame.mixer.init()
             pygame.mixer.set_num_channels(16)
             pygame.mixer.set_reserved(1)       # channel 0 is kept for looping tracks
@@ -121,11 +174,15 @@ class Audio:
     def _sound(self, y, gain=1.0):
         return pygame.mixer.Sound(buffer=to_bytes(y, self.volume * gain))
 
+    def set_volume(self, v):
+        self.volume = v
+        if self.ok:
+            pygame.mixer.music.set_volume(v)
+
     def prepare(self, names):
         """Pre-build the sounds played during judging (at the current volume)."""
         if not self.ok:
             return
-        self._sfx = {}
         for n in names:
             self._sfx[n] = self._sound(self.bank.get(n))
             self._sfx[n + "@soft"] = self._sound(self.bank.get(n), 0.45)
@@ -158,16 +215,38 @@ class Audio:
         return t0
 
     def play_stage(self, stage):
+        self.music(None, fade_ms=0)
         return self.play_buffer(render_stage(stage, self.bank))
 
     def play_track(self, ticks, cues, total_sec):
-        """For the calibration wizard (cues are ignored). Returns the time just before playback."""
+        """Metronome buffer played once. Returns the time just before playback."""
         return self.play_buffer(render_clicks(ticks, total_sec, self.bank))
 
-    def play_jingle(self, name):
-        if self.ok:
-            self._sound(self.bank.get(name)).play()
+    def play_jingle(self, role):
+        """A short piece from assets/music played once over everything else. Returns its length (s)."""
+        if not self.ok or role not in music_manifest():
+            return 0.0
+        y = self.bank.music(role)
+        self._sound(y).play()
+        return len(y) / SR
+
+    def music(self, role, fade_ms=500):
+        """Loop a role's music in the background; None fades it out. Same role again keeps playing."""
+        if not self.ok or role == self._music_role:
+            return
+        self._music_role = role
+        info = music_manifest().get(role) if role else None
+        if not info:
+            pygame.mixer.music.fadeout(fade_ms) if fade_ms else pygame.mixer.music.stop()
+            return
+        try:
+            pygame.mixer.music.load(os.path.join(music_dir(), info["file"]))
+            pygame.mixer.music.set_volume(self.volume)
+            pygame.mixer.music.play(-1, fade_ms=fade_ms)
+        except pygame.error:
+            self._music_role = None
 
     def stop(self):
+        """Stop effects, games and the metronome (background music keeps its own state)."""
         if self.ok:
             pygame.mixer.stop()

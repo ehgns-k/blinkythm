@@ -1,4 +1,5 @@
 import os, random, sys, statistics
+import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from blinkythm.detector import BlinkDetector
 from blinkythm.monitor import UsageMonitor
@@ -243,26 +244,54 @@ def test_assets_present():
     for name in SPRITES:
         assert os.path.isfile(os.path.join(base, "sprites", name + ".png")), name
     bank = A.SampleBank()
-    names = {"count", "count_accent", "finish", "dull", "jingle_great", "jingle_good", "jingle_try"}
+    names = {"count", "count_accent", "dull", "ui_move", "ui_ok", "stamp"}
     for key in S.ORDER:
         st = S.make_stage(key)
-        names |= {st.loop, st.hit_sound} | {c.sound for c in st.cues}
+        names |= {st.hit_sound} | {c.sound for c in st.cues}
     for n in names:
         y = A.load_wav(bank.path(n))
-        assert len(y) > 100 and abs(y).max() > 0.05, n
+        assert y.shape[1] == 2 and len(y) > 100 and abs(y).max() > 0.05, n
+    # every music role used by the code has a file
+    roles = A.music_manifest()
+    used = {"home", "select", "settings", "rest", "jingle_medley"}
+    from blinkythm.game.screens import JINGLES, RESULT_MUSIC
+    used |= set(JINGLES) | set(RESULT_MUSIC) | {S.make_stage(k).song for k in S.ORDER}
+    for r in used:
+        assert r in roles and os.path.isfile(os.path.join(A.music_dir(), roles[r]["file"])), r
+
+
+def _sdl_audio():
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+
+def test_stage_tempo_comes_from_its_song():
+    roles = A.music_manifest()
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        info = roles[st.song]
+        assert st.bpm == info["bpm"]
+        # the song is long enough for the whole chart after its first downbeat
+        assert info["first_downbeat"] + st.seconds <= info["seconds"] + 0.01, key
 
 
 def test_render_stage_track():
+    _sdl_audio()
     bank = A.SampleBank()
     for key in S.ORDER:
         st = S.make_stage(key)
         buf = A.render_stage(st, bank)
-        assert len(buf) >= st.seconds * A.SR
+        assert buf.shape[1] == 2 and len(buf) >= st.seconds * A.SR
         assert abs(buf).max() <= 0.951
-        # there must be sound where the first cue plays
+        # the song is under the whole chart: no silent stretch before the final fade
+        hop = A.SR // 4
+        first = int(S.COUNT_IN * st.beat_sec * A.SR)       # songs may open with a sparse bar under the count-in
+        rms = [float(np.sqrt((buf[i:i + hop] ** 2).mean())) for i in range(first, int(st.length * st.beat_sec * A.SR) - hop, hop)]
+        assert min(rms) > 0.01, (key, min(rms))
+        # the cue sounds are mixed in where they play
+        song_only = A.render_stage(type(st)(**{**st.__dict__, "cues": []}), bank)
         c = st.cues[0]
         i = int(c.beat * st.beat_sec * A.SR)
-        assert abs(buf[i:i + 2000]).max() > 0.1
+        assert abs(buf[i:i + 2000] - song_only[i:i + 2000]).max() > 0.1
 
 
 def test_feedback_and_combine():
@@ -436,7 +465,7 @@ def test_reminder_popup_opens_game():
     try:
         w = _home(app)
         w.hide()
-        assert not w.visible
+        assert not w.visible and app.audio._music_role is None
         app._show_prompt(time.perf_counter())
         p = app.prompt
         _frames(app, 2)
@@ -449,6 +478,7 @@ def test_reminder_popup_opens_game():
         p.handle_event(click)
         _frames(app)
         assert p.done and app.prompt is None
+        assert app.audio._music_role == "home"
         assert w.visible and w.from_prompt and isinstance(w.screen, HomeScreen)
     finally:
         app.shutdown()
@@ -460,14 +490,16 @@ def test_game_screens_render_and_flow():
     app = _headless_app()
     try:
         g = _home(app)
+        assert app.audio._music_role == "home" and pygame.mixer.music.get_busy()
         g.screen.key(pygame.K_g)
         _frames(app, 14)
         assert isinstance(g.screen, SC.SelectScreen)
+        assert app.audio._music_role == "select"
         g.screen.key(pygame.K_RIGHT)
         g.screen.key(pygame.K_RETURN)
         _frames(app, 14)
         assert isinstance(g.screen, SC.PlayScreen) and g.screen.stage.key == S.ORDER[1]
-        assert g.busy
+        assert g.busy and app.audio._music_role is None      # the game's own mix plays instead
         ps = g.screen
         # treat it as a blink on the first note
         n = ps.stage.notes[0]
@@ -482,9 +514,12 @@ def test_game_screens_render_and_flow():
         assert app.settings.last_stage == S.ORDER[1]
         g.screen.t_enter -= 2
         _frames(app, 2)
+        g.screen.music_at = 0.0                           # skip waiting for the jingle to end
+        _frames(app, 2)
+        assert app.audio._music_role in SC.RESULT_MUSIC
         g.screen.key(pygame.K_RETURN)
         _frames(app, 14)
-        assert isinstance(g.screen, SC.RestScreen)
+        assert isinstance(g.screen, SC.RestScreen) and app.audio._music_role == "rest"
         g.screen.t_enter -= SC.REST_SECONDS + 0.1
         _frames(app, 2)
         assert g.screen.finished and g.daily()["rests"] == 1

@@ -1,4 +1,4 @@
-"""Generates the game assets (pixel art PNG, sound effect and backing WAV) from code.
+"""Generates the game assets (pixel art PNG and sound effect WAV) from code. Music is imported by import_music.py.
 
     python tools/make_assets.py
 
@@ -361,84 +361,6 @@ def jingle(notes, step, tail=0.6):
     return buf
 
 
-# --- backing loops (2 bars = 8 beats) -----------------------------------------
-def loop_buffer(bpm):
-    beat = 60.0 / bpm
-    return np.zeros(int(round(8 * beat * SR))), beat
-
-
-def wrap_mix(buf, y, sec, gain=1.0):
-    """Wrap the tail that runs past the loop end back to the start, so the seam is smooth."""
-    i = int(round(sec * SR)) % len(buf)
-    y = y * gain
-    while len(y):
-        j = min(len(buf), i + len(y))
-        buf[i:j] += y[: j - i]
-        y = y[j - i:]
-        i = 0
-
-
-def loop_lighthouse(rng):
-    buf, b = loop_buffer(92)
-    k, s, h = kick(), snare(rng), hat(rng)
-    for x in (0, 2, 4, 6):
-        wrap_mix(buf, k, x * b, 0.55)
-    for x in (1, 3, 5, 7):
-        wrap_mix(buf, s, x * b, 0.22)
-    for x in range(16):
-        wrap_mix(buf, h, x * b / 2, 0.18 if x % 2 else 0.1)
-    # D minor | B-flat major - C major
-    for at, n, d in ((0, 38, 1.4), (1.5, 38, 0.45), (2, 45, 0.9), (3, 41, 0.9),
-                     (4, 34, 1.9), (6, 36, 1.4), (7.5, 36, 0.45)):
-        wrap_mix(buf, bass(n, d * b), at * b, 0.5)
-    wrap_mix(buf, pad([62, 65, 69], 4 * b), 0, 0.18)
-    wrap_mix(buf, pad([58, 62, 65], 2 * b), 4 * b, 0.18)
-    wrap_mix(buf, pad([60, 64, 67], 2 * b), 6 * b, 0.18)
-    # waves: low noise that swells and fades once per loop
-    n = len(buf)
-    sw = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(n) / n)
-    buf += lowpass(rng.standard_normal(n), 500) * sw * 0.35
-    return norm(buf, 0.32)
-
-
-def loop_owls(rng):
-    buf, b = loop_buffer(100)
-    k, h, r = kick(), hat(rng), rim()
-    for x in (0, 2.5, 4, 6.5):
-        wrap_mix(buf, k, x * b, 0.45)
-    for x in (1, 3, 5, 7):
-        wrap_mix(buf, r, x * b, 0.25)
-    for x in range(8):                         # swung off-beats
-        wrap_mix(buf, h, x * b, 0.12)
-        wrap_mix(buf, h, (x + 2 / 3) * b, 0.08)
-    # A minor | F major - G major
-    for at, n, d in ((0, 45, 3.8), (4, 41, 1.9), (6, 43, 1.9)):
-        wrap_mix(buf, bass(n, d * b), at * b, 0.45)
-    arp = [69, 72, 76, 72, 69, 72, 76, 79, 65, 69, 72, 69, 67, 71, 74, 71]
-    for x, n in enumerate(arp):
-        wrap_mix(buf, pluck(n + 12, 0.4, 0.6), x * b / 2, 0.12)
-    return norm(buf, 0.3)
-
-
-def loop_photo(rng):
-    buf, b = loop_buffer(112)
-    k, s, h = kick(), snare(rng), hat(rng)
-    for x in range(8):
-        wrap_mix(buf, k, x * b, 0.5)
-        wrap_mix(buf, h, (x + 0.5) * b, 0.2)
-    for x in (1, 3, 5, 7):
-        wrap_mix(buf, s, x * b, 0.35)
-    # C major | F major - G major, bass jumping octaves
-    roots = [36] * 8 + [41] * 4 + [43] * 4
-    for x, n in enumerate(roots):
-        wrap_mix(buf, bass(n + (12 if x % 2 else 0), 0.45 * b), x * b / 2, 0.4)
-    chords = [[60, 64, 67]] * 4 + [[60, 65, 69]] * 2 + [[59, 62, 67]] * 2
-    for x, ch in enumerate(chords):
-        for n in ch:
-            wrap_mix(buf, pluck(n, 0.25, 0.8), (x + 0.5) * b, 0.07)
-    return norm(buf, 0.32)
-
-
 def sounds():
     rng = np.random.default_rng(20261124)
     out = {
@@ -455,13 +377,6 @@ def sounds():
         "ui_move": norm(woodblock(900), 0.25),
         "ui_ok": norm(jingle([72, 79], 0.05, 0.3), 0.35),
         "stamp": norm(stamp_thud(rng), 0.7),
-        "finish": norm(jingle([(60, 64, 67, 72)], 0.1, 1.4), 0.6),
-        "jingle_great": norm(jingle([72, 76, 79, (72, 76, 79, 84)], 0.11), 0.6),
-        "jingle_good": norm(jingle([67, 72, (67, 72, 76)], 0.13), 0.6),
-        "jingle_try": norm(jingle([67, 64, (60, 63, 67)], 0.16), 0.5),
-        "loop_lighthouse": loop_lighthouse(rng),
-        "loop_owls": loop_owls(rng),
-        "loop_photo": loop_photo(rng),
     }
     return out
 

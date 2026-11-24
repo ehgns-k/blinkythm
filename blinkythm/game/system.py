@@ -36,6 +36,7 @@ class Row:
 
 
 class SettingsScreen(Screen):
+    music = "settings"
     def __init__(self, ctx):
         super().__init__(ctx)
         self.rows = self._rows()
@@ -72,7 +73,7 @@ class SettingsScreen(Screen):
         c, s = self.ctx, self.ctx.settings
 
         def volume_changed():
-            c.audio.volume = s.volume
+            c.audio.set_volume(s.volume)
             c.audio.prepare(["ui_move", "ui_ok", "stamp"])
 
         def camera_changed():
@@ -255,6 +256,7 @@ class SetupState:
 
 
 class SetupScreen(Screen):
+    music = "settings"
     step = 0
     heading = ""
 
@@ -419,6 +421,7 @@ class SetupCameraScreen(SetupScreen):
 
 class SetupCalibScreen(SetupScreen):
     """Blink along to a steady beat for as long as you like; the offset settles as blinks come in."""
+    music = None                       # only the metronome
     step = 2
     heading = "Timing"
     RING = (164, 114, 36)              # centre x, centre y, radius

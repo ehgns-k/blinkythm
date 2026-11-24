@@ -10,6 +10,12 @@ from typing import List
 
 from .rhythm import Cue, Note
 
+
+def song_bpm(role, default):
+    """Measured tempo of the song for a game (assets/music/music.json), so the chart sits on its beat."""
+    from .audio import music_manifest
+    return float(music_manifest().get(role, {}).get("bpm", default))
+
 COUNT_IN = 4        # beats counted before the first bar
 TAIL = 2            # beats after the last bar
 PAGE_BEATS = 8      # beats shown on one page of the guide strip
@@ -21,7 +27,7 @@ class Stage:
     title: str
     style: str                 # one-word description for the game list
     bpm: float
-    loop: str                  # backing loop sound name
+    song: str                  # music role in assets/music/music.json
     hit_sound: str             # sound for a good hit
     howto: List[str]
     sections: List[str]
@@ -73,7 +79,7 @@ LIGHTHOUSE_ROUNDS = [
 
 def build_lighthouse():
     st = Stage(
-        key="lighthouse", title="Lighthouse", style="Copy", bpm=92, loop="loop_lighthouse",
+        key="lighthouse", title="Lighthouse", style="Copy", bpm=song_bpm("stage_lighthouse", 92), song="stage_lighthouse",
         hit_sound="ship_bell",
         howto=[
             "The lighthouse flashes a signal over one bar (4 beats).",
@@ -102,7 +108,7 @@ OWL_PHRASES = [
 
 def build_owls():
     st = Stage(
-        key="owls", title="Owl Choir", style="Continue", bpm=100, loop="loop_owls",
+        key="owls", title="Owl Choir", style="Continue", bpm=song_bpm("stage_owls", 87), song="stage_owls",
         hit_sound="hoot_me",
         howto=[
             "Three owls on a branch close their eyes and hoot in turn. You are the blue one on the right.",
@@ -132,7 +138,7 @@ PHOTO_BELLS = (
 
 def build_photo():
     st = Stage(
-        key="photo", title="Blink Studio", style="2 beats later", bpm=112, loop="loop_photo",
+        key="photo", title="Blink Studio", style="2 beats later", bpm=song_bpm("stage_photo", 102), song="stage_photo",
         hit_sound="shutter",
         howto=[
             "When a customer rings the desk bell, blink exactly 2 beats later to take the photo.",

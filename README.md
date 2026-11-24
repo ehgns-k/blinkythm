@@ -46,7 +46,7 @@ Test options:
 | Medley | All | The three games in a row with a 3.5 s break between them. | 2 min |
 
 - The home screen suggests the game after the one you played last. Enter, or a double blink, starts it.
-- Each game opens with a 4-beat count-in. The backing track (92, 100 or 112 BPM) and all cues are mixed into one buffer before playback, so a slow frame cannot shift the beat.
+- Each game opens with a 4-beat count-in on the song's first downbeat. The song, the count-in and all cues are mixed into one buffer before playback, so a slow frame cannot shift the beat. Each game's tempo is the measured tempo of its song: Lighthouse 92, Owl Choir 87, Blink Studio 102 BPM.
 - The guide strip at the bottom shows 8 beats at a time. The top row shows cues you have heard, the bottom row where to blink. A blink spot appears only after its cue has played. The guide can be turned off in Settings.
 - The result screen shows a stamp, accuracy, grade counts, accuracy per section (per game in the medley) and the timing spread, plus a line on your strongest and weakest section. Best scores are saved per game.
 - Every finished game adds a stamp to the 10-slot card on the home screen. There are no daily streaks.
@@ -143,9 +143,11 @@ Video is used in memory to find eye landmarks and is never saved or sent. The ap
     blinkythm/game/prompt.py   reminder popup
     blinkythm/winenv.py        work area, fullscreen detection, autostart
     assets/sprites/*.png       pixel art at 1x (drawn at 2x to 4x in the game)
-    assets/sounds/*.wav        effects, cues and backing loops (44.1 kHz, 16-bit, mono)
+    assets/sounds/*.wav        effects and cues (44.1 kHz, 16-bit, mono)
+    assets/music/              songs and jingles (OGG) and music.json, which says what plays where
     assets/fonts/              Galmuri bitmap fonts and their license (OFL.txt)
     tools/make_assets.py       generates the PNG and WAV files: python tools/make_assets.py
+    tools/import_music.py      measures, trims, levels and encodes the music: python tools/import_music.py SOURCE_DIR
     tools/make_icon.py         builds the exe icon
     tools/get_model.py         downloads the Face Landmarker model into assets/models/ (not committed)
     tests/test_core.py         logic tests and headless game-flow tests: python tests/test_core.py
@@ -156,9 +158,38 @@ Video is used in memory to find eye landmarks and is never saved or sent. The ap
 
 ## Assets
 
-All art and sound were made for this project by `tools/make_assets.py`. Sprites are drawn as character maps; sounds are built from sine waves, noise and decay curves. The random seed is fixed, so running the script again gives the same files. To change an asset, edit the script, run it and commit the output.
+Sprites and sound effects were made for this project by `tools/make_assets.py`. Sprites are drawn as character maps; effects are built from sine waves, noise and decay curves. The random seed is fixed, so running the script again gives the same files. To change an asset, edit the script, run it and commit the output.
 
 The fonts are the bitmap versions of Galmuri 2.40.3 by Lee Minseo (quiple): Galmuri9, 11, 11 Bold and 14. They are under the SIL Open Font License 1.1, taken from the npm package `galmuri`. The full license is in `assets/fonts/OFL.txt`.
+
+## Music
+
+The music was written by the project author and produced with Suno. `assets/music/music.json` lists which piece plays where:
+
+| Where | Role | Source |
+|---|---|---|
+| Lighthouse | `stage_lighthouse` | BGM_BAR (92 BPM) |
+| Owl Choir | `stage_owls` | BGM_COUNSELING (87 BPM) |
+| Blink Studio | `stage_photo` | BGM_TUNNEL (102 BPM) |
+| Home | `home` | BGM_ENDLESS_GAME |
+| Game select | `select` | BGM_OMOCHA |
+| Settings and setup | `settings` | BGM_PRACTICE |
+| Rest | `rest` | BGM_AMBIENT |
+| Result music by rank | `result_great`, `result_good`, `result_try` | BGM_EPILOGUE_GREAT, _GOOD, _BAD |
+| Result jingles by rank | `jingle_great`, `jingle_good`, `jingle_try` | JINGLE_EPILOGUE_GREAT, _GOOD, _BAD |
+| Between medley games | `jingle_medley` | JINGLE_REMIX |
+
+The calibration screen plays only its metronome. The result screen plays the rank's jingle when the stamp lands, then loops the rank's music.
+
+The source WAV files are not in the repository. To change a piece, edit its `source` in `music.json` and run `python tools/import_music.py SOURCE_DIR` (needs ffmpeg with libvorbis). For game songs the tool:
+
+- finds the tempo and beat grid from note onsets, and the first downbeat from the kick drum;
+- checks the tempo does not drift between the two halves of the song;
+- trims the song to 80 beats after the downbeat.
+
+For every piece it evens out loudness and writes OGG (quality 5).
+
+A game song should keep a steady tempo and have no silent stretch inside the part the game uses. When the songs were chosen, BGM_BEAT_MACHINE was dropped for Blink Studio because it has a 1.5-second stop 29 seconds in.
 
 ## Releases
 
@@ -192,6 +223,7 @@ The Windows build bundles these packages. Their licenses as listed on PyPI:
 | pystray | LGPL 3.0 |
 | Pillow | MIT-CMU |
 | Galmuri fonts | SIL Open Font License 1.1 |
+| Music (assets/music) | by the project author, made with Suno; license to be stated |
 | MediaPipe Face Landmarker model (downloaded at build time) | not confirmed, see Known limitations |
 
 The exe is built with PyInstaller (GPL 2.0 or later with an exception that allows distributing the built program under any license).
@@ -204,4 +236,4 @@ The exe is built with PyInstaller (GPL 2.0 or later with an exception that allow
 - The Face Landmarker model is downloaded from Google's MediaPipe model storage. Its license could not be confirmed from an official page during development. Check it before relying on it for distribution.
 - Bluetooth headphones add large, unstable delay. The timing screen will not accept a measurement until the spread is small.
 - The reminder uses an SDL setting so that showing it does not take keyboard focus. This could not be checked on Windows here.
-- With no audio device on the development machine, the music and effects were checked only by their waveforms (length, peak level, cue positions). The mix still needs a listen on real speakers.
+- With no audio device on the development machine, music and effects were checked only by measurement: tempo, beat alignment (within 6 ms of the chart), loudness and silent stretches. The mix and the choice of songs still need a listen on real speakers.

@@ -58,6 +58,7 @@ jobs:
           --add-data "assets/sprites;assets/sprites"
           --add-data "assets/sounds;assets/sounds"
           --add-data "assets/fonts;assets/fonts"
+          --add-data "assets/music;assets/music"
           --add-data "assets/models;assets/models"
           --hidden-import pystray._win32
           main.py
