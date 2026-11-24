@@ -36,6 +36,8 @@ jobs:
           --name Blinkythm
           --icon assets/blinkythm.ico
           --collect-all mediapipe
+          --add-data "assets/sprites;assets/sprites"
+          --add-data "assets/sounds;assets/sounds"
           --hidden-import pystray._win32
           main.py
 

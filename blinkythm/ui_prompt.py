@@ -25,7 +25,7 @@ class PromptDialog(tk.Toplevel):
         tk.Label(body, bitmap="info").grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 10))
         ttk.Label(body, text="눈이 건조해질 수 있습니다.", font=bold_font(9)).grid(row=0, column=1, sticky="w")
         msg = ("화면을 본 지 %g분이 지났고, 최근 1분간 눈 깜빡임이 분당 %.0f회입니다.\n"
-               "짧은 리듬 게임(약 45초)으로 눈을 쉬어 보시겠어요?") % (round(minutes, 1), rate)
+               "짧은 리듬 게임(약 35초)으로 눈을 쉬어 보시겠어요?") % (round(minutes, 1), rate)
         ttk.Label(body, text=msg, justify="left", wraplength=330).grid(row=1, column=1, sticky="w", pady=(4, 0))
 
         ttk.Separator(self).pack(fill="x", padx=8)

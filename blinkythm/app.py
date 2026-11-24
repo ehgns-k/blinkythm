@@ -63,7 +63,7 @@ class App:
     def _build_menu(self):
         m = tk.Menu(self.root)
         f = tk.Menu(m, tearoff=0)
-        f.add_command(label="지금 한 판 하기(P)", underline=9, command=self.open_game)
+        f.add_command(label="지금 한 판 하기(P)", underline=9, command=lambda: self.open_game())
         f.add_command(label="보정 마법사(W)...", underline=7, command=self.open_wizard)
         f.add_separator()
         f.add_command(label="창 숨기기(H)", underline=6, command=self.hide_main)
@@ -105,7 +105,7 @@ class App:
             row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
         row = ttk.Frame(st)
         row.pack(fill="x", pady=(4, 0))
-        ttk.Button(row, text="지금 한 판 하기(P)", underline=9, command=self.open_game).pack(side="left")
+        ttk.Button(row, text="지금 한 판 하기(P)", underline=9, command=lambda: self.open_game()).pack(side="left")
         ttk.Button(row, text="보정 마법사(W)...", underline=7, command=self.open_wizard).pack(side="left", padx=6)
         self.var_monitor = tk.BooleanVar(value=self.settings.monitoring)
         ttk.Checkbutton(st, text="눈 깜빡임 모니터링 사용", variable=self.var_monitor,
@@ -141,7 +141,7 @@ class App:
             cb.state(["disabled"])
         vr = ttk.Frame(o)
         vr.pack(fill="x", pady=(6, 0))
-        ttk.Label(vr, text="효과음 크기").pack(side="left")
+        ttk.Label(vr, text="소리 크기").pack(side="left")
         self.var_vol = tk.DoubleVar(value=self.settings.volume)
         ttk.Scale(vr, from_=0.0, to=1.0, variable=self.var_vol, length=160).pack(side="left", padx=8)
         row2 = ttk.Frame(se)
@@ -243,7 +243,7 @@ class App:
         Item = pystray.MenuItem
         menu = pystray.Menu(
             Item("Blinkythm 열기", lambda: self.post(self.show_main), default=True),
-            Item("지금 한 판 하기", lambda: self.post(self.open_game)),
+            Item("지금 한 판 하기", lambda: self.post(lambda: self.open_game())),
             Item("모니터링 사용", lambda: self.post(self._tray_toggle), checked=lambda i: self.settings.monitoring),
             pystray.Menu.SEPARATOR,
             Item("끝내기", lambda: self.post(self.quit)),
@@ -263,18 +263,18 @@ class App:
             "Blinkythm 정보",
             "Blinkythm %s\n\n웹캠으로 눈 깜빡임 빈도를 살피다가, 화면을 오래 보고 깜빡임이 줄면 "
             "짧은 리듬 게임을 제안합니다.\n영상은 컴퓨터 안에서만 처리되며 저장·전송되지 않습니다.\n\n"
-            "'리듬 천국'에서 영감을 받은 따라 하기(call and response) 방식의 독자 제작 게임이며, "
-            "원작의 그림·음원은 포함하지 않습니다." % __version__,
+            "게임: 등대 신호, 올빼미 합창, 깜빡 사진관\n"
+            "그림과 소리는 모두 이 프로그램을 위해 코드로 만든 것입니다(tools/make_assets.py)." % __version__,
             parent=self.root)
 
     # ------------------------------------------------------------------ 게임/마법사
-    def open_game(self):
+    def open_game(self, stage=None):
         if self.game is not None:
             self.game.lift()
             return
         if self.wizard is not None:
             return
-        self.game = GameWindow(self)
+        self.game = GameWindow(self, stage)
 
     def game_closed(self, win):
         if self.game is win:

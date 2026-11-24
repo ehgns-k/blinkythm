@@ -2,7 +2,7 @@
 import json
 import os
 import sys
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, field, fields
 
 
 def config_dir():
@@ -32,6 +32,8 @@ class Settings:
     show_guide: bool = True
     volume: float = 0.7
     first_run_done: bool = False
+    last_stage: str = ""              # 마지막으로 한 게임(알림에서 다음 게임을 고를 때 씀)
+    records: dict = field(default_factory=dict)   # 게임 -> 최고 정확도(%)
 
     @classmethod
     def load(cls):
@@ -44,6 +46,8 @@ class Settings:
             for k, v in data.items():
                 if k in names:
                     setattr(s, k, v)
+            if not isinstance(s.records, dict):
+                s.records = {}
         except (OSError, ValueError):
             pass
         return s

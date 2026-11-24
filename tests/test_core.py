@@ -4,6 +4,8 @@ from blinkythm.detector import BlinkDetector
 from blinkythm.monitor import UsageMonitor
 from blinkythm.config import Settings
 from blinkythm import rhythm as R
+from blinkythm import stages as S
+from blinkythm import audio as A
 
 
 def synth_ear(blink_starts, fps, dur, open_ear=0.30, closed=0.10, blink_len=0.15, noise=0.008, seed=1):
@@ -109,9 +111,9 @@ def test_monitor_away_reset_and_insufficient_data():
     assert not m.should_prompt(t + 1)
 
 
-def make_judge(offset=0.0, slack=0.0):
-    _, resp = R.build_chart()
-    return R.Judge(resp, t0=100.0, offset=offset, slack=slack), resp
+def make_judge(offset=0.0, slack=0.0, key="lighthouse"):
+    st = S.make_stage(key)
+    return R.Judge(st.notes, t0=100.0, beat_sec=st.beat_sec, offset=offset, slack=slack), st.notes
 
 
 def test_judge_grades_and_signs():
@@ -129,7 +131,7 @@ def test_judge_offset_and_double_blink():
     j, resp = make_judge(offset=0.09)
     # 카메라 지연 90ms가 있는 입력도 보정 후 완벽
     assert j.on_blink(resp[0].time + 0.09).grade == R.PERFECT
-    # 같은 노트에 연속 두 번 -> 두 번째는 다음 노트 창(1박=625ms)에 안 닿으므로 stray
+    # 같은 노트에 연속 두 번 -> 두 번째는 다음 노트 창에 닿지 않으므로 stray
     assert j.on_blink(resp[0].time + 0.09 + 0.2) is None
 
 
@@ -143,33 +145,114 @@ def test_judge_miss_waits_for_late_event():
 
 
 def test_judge_assigns_nearest_when_windows_overlap():
-    j, resp = make_judge()
-    # 0.5박 간격 노트가 있는 라운드(인덱스 14: [0.5,2,3]은 1.5박 간격)에서도 가까운 쪽에 배정
-    a, b = resp[0], resp[1]
-    mid = (a.time + b.time) / 2
-    r = j.on_blink(a.time + 0.05)
-    assert r.note is a
+    # 사진관의 '두 명 연달아'는 노트 간격이 1박(536ms)이라 창이 가깝다. 가까운 쪽에 배정되어야 한다
+    j, notes = make_judge(key="photo")
+    pair = [(a, b) for a, b in zip(notes, notes[1:]) if b.beat - a.beat == 1][0]
+    a, b = pair
+    assert j.on_blink(b.time - 0.15).note is b
+    assert j.on_blink(a.time + 0.05).note is a
 
 
-def test_full_play_simulation():
-    """30fps 카메라 + 130ms 장치 지연 + 사람 편차(σ45ms)로 한 판 시뮬레이션."""
-    rnd = random.Random(7)
-    _, resp = R.build_chart()
-    t0 = 0.0
-    lag = 0.130
-    j = R.Judge(resp, t0, offset=lag)
-    human = [n.time + 0.03 + rnd.gauss(0, 0.045) for n in resp]       # 박보다 평균 30ms 늦게 시작
-    # 카메라 시계에서는 lag만큼 늦게 보임
-    series = synth_ear(human, 30, R.TOTAL_BEATS * R.BEAT + 1)
+def simulate(key, lag=0.130, sigma=0.045, seed=7, fps=30):
+    """웹캠 프레임 + 장치 지연 + 사람 편차로 한 판 시뮬레이션."""
+    rnd = random.Random(seed)
+    st = S.make_stage(key)
+    j = R.Judge(st.notes, 0.0, st.beat_sec, offset=lag)
+    human = [n.time + 0.03 + rnd.gauss(0, sigma) for n in st.notes]   # 박보다 평균 30ms 늦게 시작
+    series = synth_ear(human, fps, st.seconds + 1)
     closes, _ = run_detector(series, cam_lag=lag)
     for o in closes:
         j.on_blink(o)
     j.poll(1e9)
-    s = j.summary()
-    assert s["counts"][R.MISS] <= 2, s
-    assert s["accuracy"] > 70, s
-    assert 0.0 < s["mean_dt"] < 0.08, s
-    print("sim:", {k: s[k] for k in ("counts", "accuracy", "mean_dt", "sd", "rank")})
+    return st, j.summary(len(st.sections))
+
+
+def test_full_play_simulation():
+    for key in S.ORDER:
+        st, s = simulate(key)
+        assert s["counts"][R.MISS] <= 2, (key, s)
+        assert s["accuracy"] > 70, (key, s)
+        assert 0.0 < s["mean_dt"] < 0.08, (key, s)
+        assert all(a is not None for a in s["sections"])
+        print("sim:", key, {k: s[k] for k in ("counts", "accuracy", "rank")})
+
+
+def test_stage_charts():
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        assert 25 < st.seconds < 45, (key, st.seconds)
+        beats = [n.beat for n in st.notes]
+        assert beats == sorted(beats) and [n.idx for n in st.notes] == list(range(len(beats)))
+        # 노트 사이가 판정 창 두 개(±200ms)보다 넉넉해야 한 깜빡임이 엉뚱한 노트에 붙지 않는다
+        gaps = [(b - a) * st.beat_sec for a, b in zip(beats, beats[1:])]
+        assert min(gaps) >= 0.5, (key, min(gaps))
+        assert beats[0] >= S.COUNT_IN and beats[-1] < st.length
+        assert all(c.beat < st.length for c in st.cues)
+        assert all(n.reveal < n.beat for n in st.notes)
+        assert (st.length - S.COUNT_IN) % 4 == 0
+        assert {n.section for n in st.notes} == set(range(len(st.sections)))
+
+
+def test_photo_delay_and_owl_intervals():
+    st = S.make_stage("photo")
+    bells = sorted(c.beat for c in st.cues)
+    assert [n.beat for n in st.notes] == [b + S.PHOTO_DELAY for b in bells]
+    owls = S.make_stage("owls")
+    a = sorted(c.beat for c in owls.cues if c.actor == "owl_a")
+    b = sorted(c.beat for c in owls.cues if c.actor == "owl_b")
+    for x, y, n in zip(a, b, owls.notes):
+        assert abs((n.beat - y) - (y - x)) < 1e-9
+
+
+SPRITES = ["owl_a_open", "owl_a_closed", "owl_b_open", "owl_b_closed", "owl_me_open", "owl_me_closed",
+           "lighthouse_on", "lighthouse_off", "ship_on", "ship_off", "camera_open", "camera_shut",
+           "customer_1", "customer_2", "customer_3", "desk_bell"]
+
+
+def test_assets_present():
+    base = A.assets_dir()
+    for name in SPRITES:
+        assert os.path.isfile(os.path.join(base, "sprites", name + ".png")), name
+    bank = A.SampleBank()
+    names = {"count", "count_accent", "finish", "dull", "jingle_great", "jingle_good", "jingle_try"}
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        names |= {st.loop, st.hit_sound} | {c.sound for c in st.cues}
+    for n in names:
+        y = A.load_wav(bank.path(n))
+        assert len(y) > 100 and abs(y).max() > 0.05, n
+
+
+def test_render_stage_track():
+    bank = A.SampleBank()
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        buf = A.render_stage(st, bank)
+        assert len(buf) >= st.seconds * A.SR
+        assert abs(buf).max() <= 0.951
+        # 첫 신호음 자리에는 소리가 있어야 한다
+        c = st.cues[0]
+        i = int(c.beat * st.beat_sec * A.SR)
+        assert abs(buf[i:i + 2000]).max() > 0.1
+
+
+def test_feedback_and_combine():
+    _, a = simulate("lighthouse")
+    _, b = simulate("owls", sigma=0.12, seed=3)
+    m = R.combine([a, b])
+    assert m["total"] == a["total"] + b["total"]
+    assert len(m["sections"]) == 2
+    lines = R.feedback(m, ["등대 신호", "올빼미 합창"])
+    assert 1 <= len(lines) <= 3
+    empty = R.make_summary({g: (5 if g == R.MISS else 0) for g in R.GRADES}, 5, [], 0, 0, [0.0, 0.0])
+    assert "얼굴" in R.feedback(empty, ["가", "나"])[0]
+    assert R.rank_of(90) == "훌륭해요" and R.rank_level(10) == 3
+
+
+def test_next_stage_rotation():
+    assert S.next_stage("") == S.ORDER[0]
+    assert S.next_stage(S.ORDER[-1]) == S.ORDER[0]
+    assert S.next_stage(S.ORDER[0]) == S.ORDER[1]
 
 
 def test_calibration_offset():
@@ -191,7 +274,7 @@ def test_suggest_shift():
     j, resp = make_judge()
     for n in resp[:12]:
         j.on_blink(n.time + 0.06)
-    s = j.summary()
+    s = j.summary(3)
     assert abs(R.suggest_offset_shift(s) - 0.06) < 1e-6
     j2, resp2 = make_judge()
     for n in resp2[:12]:
