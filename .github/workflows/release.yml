@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v1.0.1). Leave empty for a test build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -52,7 +57,8 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $name = if ($env:GITHUB_REF_TYPE -eq "tag") { "Blinkythm-$env:GITHUB_REF_NAME-win64" } else { "Blinkythm-dev-win64" }
+          $tag = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "${{ inputs.tag }}" }
+          $name = if ($tag) { "Blinkythm-$tag-win64" } else { "Blinkythm-dev-win64" }
           Compress-Archive -Path dist/Blinkythm -DestinationPath "$name.zip"
           echo "ASSET=$name.zip" >> $env:GITHUB_ENV
 
@@ -62,9 +68,11 @@ jobs:
           path: ${{ env.ASSET }}
 
       - name: Publish release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
-          name: Blinkythm ${{ github.ref_name }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Blinkythm ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           body_path: RELEASE_NOTES.md
           files: ${{ env.ASSET }}
