@@ -1,4 +1,4 @@
-"""exe 아이콘(assets/blinkythm.ico)을 생성한다. 빌드 시 한 번 실행."""
+"""Build the exe icon (assets/blinkythm.ico). Run once before packaging."""
 import os
 from PIL import Image, ImageDraw
 

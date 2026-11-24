@@ -1,9 +1,9 @@
-"""화면 사용 시간 + 깜빡임 빈도를 보고 게임 프롬프트를 띄울지 결정한다(순수 로직)."""
+"""Decides when to suggest a game, from screen time and blink rate (pure logic)."""
 import threading
 from collections import deque
 
 RATE_WINDOW = 60.0
-MIN_VISIBLE = 40.0      # 최근 60초 중 얼굴이 이만큼은 보여야 빈도를 신뢰
+MIN_VISIBLE = 40.0      # the face must be visible this long in the last 60 s to trust the rate
 
 
 class UsageMonitor:
@@ -19,7 +19,7 @@ class UsageMonitor:
         self.paused = False
         self.suppressed_today = False
 
-    # --- 입력(트래커 스레드) -------------------------------------------------
+    # --- input (tracker thread) ---------------------------------------------
     def on_frame(self, t, visible):
         with self._lock:
             dt = 0.0 if self._last_t is None else min(max(t - self._last_t, 0.0), 1.0)
@@ -48,13 +48,13 @@ class UsageMonitor:
         while self._blinks and t - self._blinks[0] > RATE_WINDOW:
             self._blinks.popleft()
 
-    # --- 조회 ----------------------------------------------------------------
+    # --- queries -------------------------------------------------------------
     def screen_seconds(self, now):
         with self._lock:
             return 0.0 if self._screen_since is None else max(0.0, now - self._screen_since)
 
     def blink_rate(self, now):
-        """최근 1분 기준 분당 깜빡임. 데이터가 부족하면 None."""
+        """Blinks per minute over the last minute, or None if there is not enough data."""
         with self._lock:
             self._trim(now)
             vis = sum(dt for _, dt in self._visible)
@@ -70,13 +70,13 @@ class UsageMonitor:
         rate = self.blink_rate(now)
         return rate is not None and rate < self.s.blink_threshold
 
-    # --- 사용자 응답 ---------------------------------------------------------
+    # --- user responses ------------------------------------------------------
     def snooze(self, now, minutes=None):
         self._snooze_until = now + 60.0 * (minutes if minutes is not None else self.s.snooze_minutes)
 
     def mark_played(self, now):
         with self._lock:
-            self._screen_since = now        # 눈을 쉬었으니 사용 시간 초기화
+            self._screen_since = now        # the eyes were rested, so restart screen time
             self._blinks.clear()
             self._visible.clear()
         self._snooze_until = now + 60.0 * self.s.cooldown_minutes

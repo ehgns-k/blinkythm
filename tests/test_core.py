@@ -1,13 +1,16 @@
 import os, random, sys, statistics
+import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from blinkythm.detector import BlinkDetector
 from blinkythm.monitor import UsageMonitor
 from blinkythm.config import Settings
 from blinkythm import rhythm as R
+from blinkythm import stages as S
+from blinkythm import audio as A
 
 
 def synth_ear(blink_starts, fps, dur, open_ear=0.30, closed=0.10, blink_len=0.15, noise=0.008, seed=1):
-    """blink_starts(진짜 감기 시작 시각)에 맞춰 EAR 시계열 생성. 감기 40ms/뜨기 80ms 사다리꼴."""
+    """EAR series for the given true blink starts. Trapezoid: 40 ms closing, 80 ms opening."""
     rnd = random.Random(seed)
     out = []
     n = int(dur * fps)
@@ -39,7 +42,7 @@ def test_detector_accuracy_30fps():
     closes, blinks = run_detector(synth_ear(starts, 30, 32))
     assert len(closes) == 15 and len(blinks) == 15, (len(closes), len(blinks))
     errs = [c - s for c, s in zip(closes, starts)]
-    # 임계값(72%) 교차 시점은 감기 시작 후 약 40ms*(0.28/0.20)=약 11ms 부근
+    # the 72% threshold is crossed about 40ms*(0.28/0.20), roughly 11 ms after the blink starts
     assert all(-0.01 < e < 0.06 for e in errs), errs
     assert statistics.pstdev(errs) < 0.012
 
@@ -48,11 +51,40 @@ def test_detector_15fps_and_noise_flutter():
     starts = [2 + 2.0 * k for k in range(10)]
     closes, _ = run_detector(synth_ear(starts, 15, 24))
     assert len(closes) == 10
-    # 한 프레임짜리 노이즈 하락은 무시
+    # small noise dips are ignored
     ser = synth_ear([], 30, 10)
-    ser = [(t, 0.05 if i == 100 else e) for i, (t, e) in enumerate(ser)]
+    ser = [(t, 0.24 if i == 100 else e) for i, (t, e) in enumerate(ser)]
     closes, _ = run_detector(ser)
     assert closes == []
+
+
+def _smoothed(fps, closed, blink_len, alpha, n=40, noise=0.008, seed=1):
+    """Short, shallow blinks passed through exponential smoothing, like landmark trackers produce."""
+    starts = [2 + 1.3 * k for k in range(n)]
+    out, acc = [], None
+    for t, e in synth_ear(starts, fps, 2 + 1.3 * n + 2, closed=closed, blink_len=blink_len, noise=noise, seed=seed):
+        acc = e if acc is None else acc + alpha * (e - acc)
+        out.append((t, acc))
+    return out
+
+
+def test_detector_fast_shallow_blinks():
+    # fast blinks that only dip for one frame below the threshold must still count
+    for fps, closed in ((30, 0.16), (15, 0.14)):
+        closes, _ = run_detector(_smoothed(fps, closed, 0.02 if fps == 30 else 0.03, 0.5 if fps == 30 else 0.6))
+        assert len(closes) >= 38, (fps, len(closes))
+    # higher sensitivity catches even shallower ones
+    d_closes = []
+    from blinkythm.detector import BlinkDetector as BD
+    d = BD(lambda o: d_closes.append(o))
+    d.set_sensitivity(2)
+    for t, e in _smoothed(30, 0.18, 0.02, 0.5):
+        d.feed(t, e)
+    assert len(d_closes) >= 38
+    # an open-eye signal with ordinary noise gives no false blinks at Normal
+    closes, _ = run_detector(synth_ear([], 30, 120, noise=0.01, seed=5))
+    assert closes == []
+    assert d.count == len(d_closes) and len(d.history) > 0
 
 
 def test_long_close_not_counted_as_blink():
@@ -72,7 +104,7 @@ def test_monitor_trigger():
     s = Settings(screen_minutes=1, blink_threshold=12, away_seconds=30)
     m = UsageMonitor(s)
     t = 0.0
-    # 70초간 보이지만 깜빡임 3회뿐 -> 분당 약 2.6회
+    # visible for 70 s but only 3 blinks -> about 2.6 per minute
     for i in range(int(70 * 15)):
         t = i / 15
         m.on_frame(t, True)
@@ -84,7 +116,7 @@ def test_monitor_trigger():
     assert not m.should_prompt(t, dnd=True)
     m.snooze(t, 5)
     assert not m.should_prompt(t + 100)
-    # 깜빡임이 충분하면 알리지 않음
+    # enough blinks: no prompt
     m2 = UsageMonitor(s)
     for i in range(int(70 * 15)):
         t = i / 15
@@ -100,18 +132,18 @@ def test_monitor_away_reset_and_insufficient_data():
     for i in range(30 * 15):
         m.on_frame(i / 15, True)
     t = 30.0
-    for i in range(60 * 15):       # 60초 자리비움
+    for i in range(60 * 15):       # away for 60 s
         t += 1 / 15
         m.on_frame(t, False)
     assert m.screen_seconds(t) == 0
     m.on_frame(t + 1, True)
-    assert m.blink_rate(t + 1) is None      # 데이터 부족이면 판단 보류
+    assert m.blink_rate(t + 1) is None      # not enough data: no verdict
     assert not m.should_prompt(t + 1)
 
 
-def make_judge(offset=0.0, slack=0.0):
-    _, resp = R.build_chart()
-    return R.Judge(resp, t0=100.0, offset=offset, slack=slack), resp
+def make_judge(offset=0.0, slack=0.0, key="lighthouse"):
+    st = S.make_stage(key)
+    return R.Judge(st.notes, t0=100.0, beat_sec=st.beat_sec, offset=offset, slack=slack), st.notes
 
 
 def test_judge_grades_and_signs():
@@ -121,77 +153,197 @@ def test_judge_grades_and_signs():
     assert j.on_blink(resp[1].time - 0.10).grade == R.GOOD
     r = j.on_blink(resp[2].time + 0.18)
     assert r.grade == R.OK and r.dt > 0
-    assert j.on_blink(resp[3].time + 0.35) is None       # 창 밖: 자연 깜빡임으로 무시
+    assert j.on_blink(resp[3].time + 0.35) is None       # outside the window: ignored as a natural blink
     assert len(j.stray) == 1
 
 
 def test_judge_offset_and_double_blink():
     j, resp = make_judge(offset=0.09)
-    # 카메라 지연 90ms가 있는 입력도 보정 후 완벽
+    # 90 ms of camera delay still gives a perfect after the offset
     assert j.on_blink(resp[0].time + 0.09).grade == R.PERFECT
-    # 같은 노트에 연속 두 번 -> 두 번째는 다음 노트 창(1박=625ms)에 안 닿으므로 stray
+    # a second blink on the same note does not reach the next note's window, so it is stray
     assert j.on_blink(resp[0].time + 0.09 + 0.2) is None
 
 
 def test_judge_miss_waits_for_late_event():
     j, resp = make_judge()
     n = resp[0]
-    assert j.poll(n.time + 0.3) == []           # 창+유예 전에는 놓침 확정 안 함
+    assert j.poll(n.time + 0.3) == []           # no miss before window + grace
     out = j.poll(n.time + 0.2 + R.MISS_GRACE + 0.01)
     assert [r.grade for r in out] == [R.MISS]
     assert j.combo == 0
 
 
 def test_judge_assigns_nearest_when_windows_overlap():
-    j, resp = make_judge()
-    # 0.5박 간격 노트가 있는 라운드(인덱스 14: [0.5,2,3]은 1.5박 간격)에서도 가까운 쪽에 배정
-    a, b = resp[0], resp[1]
-    mid = (a.time + b.time) / 2
-    r = j.on_blink(a.time + 0.05)
-    assert r.note is a
+    # "Back to back" in Blink Studio has notes 1 beat (536 ms) apart; a blink goes to the nearer note
+    j, notes = make_judge(key="photo")
+    pair = [(a, b) for a, b in zip(notes, notes[1:]) if b.beat - a.beat == 1][0]
+    a, b = pair
+    assert j.on_blink(b.time - 0.15).note is b
+    assert j.on_blink(a.time + 0.05).note is a
 
 
-def test_full_play_simulation():
-    """30fps 카메라 + 130ms 장치 지연 + 사람 편차(σ45ms)로 한 판 시뮬레이션."""
-    rnd = random.Random(7)
-    _, resp = R.build_chart()
-    t0 = 0.0
-    lag = 0.130
-    j = R.Judge(resp, t0, offset=lag)
-    human = [n.time + 0.03 + rnd.gauss(0, 0.045) for n in resp]       # 박보다 평균 30ms 늦게 시작
-    # 카메라 시계에서는 lag만큼 늦게 보임
-    series = synth_ear(human, 30, R.TOTAL_BEATS * R.BEAT + 1)
+def simulate(key, lag=0.130, sigma=0.045, seed=7, fps=30):
+    """Simulate one game with webcam frames, device delay and human spread."""
+    rnd = random.Random(seed)
+    st = S.make_stage(key)
+    j = R.Judge(st.notes, 0.0, st.beat_sec, offset=lag)
+    human = [n.time + 0.03 + rnd.gauss(0, sigma) for n in st.notes]   # on average 30 ms after the beat
+    series = synth_ear(human, fps, st.seconds + 1)
     closes, _ = run_detector(series, cam_lag=lag)
     for o in closes:
         j.on_blink(o)
     j.poll(1e9)
-    s = j.summary()
-    assert s["counts"][R.MISS] <= 2, s
-    assert s["accuracy"] > 70, s
-    assert 0.0 < s["mean_dt"] < 0.08, s
-    print("sim:", {k: s[k] for k in ("counts", "accuracy", "mean_dt", "sd", "rank")})
+    return st, j.summary(len(st.sections))
 
 
-def test_calibration_offset():
+def test_full_play_simulation():
+    for key in S.ORDER:
+        st, s = simulate(key)
+        assert s["counts"][R.MISS] <= 2, (key, s)
+        assert s["accuracy"] > 70, (key, s)
+        assert 0.0 < s["mean_dt"] < 0.08, (key, s)
+        assert all(a is not None for a in s["sections"])
+        print("sim:", key, {k: s[k] for k in ("counts", "accuracy", "rank")})
+
+
+def test_stage_charts():
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        assert 25 < st.seconds < 45, (key, st.seconds)
+        beats = [n.beat for n in st.notes]
+        assert beats == sorted(beats) and [n.idx for n in st.notes] == list(range(len(beats)))
+        # notes must be further apart than two windows (+/-200 ms) so a blink never lands on the wrong note
+        gaps = [(b - a) * st.beat_sec for a, b in zip(beats, beats[1:])]
+        assert min(gaps) >= 0.5, (key, min(gaps))
+        assert beats[0] >= S.COUNT_IN and beats[-1] < st.length
+        assert all(c.beat < st.length for c in st.cues)
+        assert all(n.reveal < n.beat for n in st.notes)
+        assert (st.length - S.COUNT_IN) % 4 == 0
+        assert {n.section for n in st.notes} == set(range(len(st.sections)))
+
+
+def test_photo_delay_and_owl_intervals():
+    st = S.make_stage("photo")
+    bells = sorted(c.beat for c in st.cues)
+    assert [n.beat for n in st.notes] == [b + S.PHOTO_DELAY for b in bells]
+    owls = S.make_stage("owls")
+    a = sorted(c.beat for c in owls.cues if c.actor == "owl_a")
+    b = sorted(c.beat for c in owls.cues if c.actor == "owl_b")
+    for x, y, n in zip(a, b, owls.notes):
+        assert abs((n.beat - y) - (y - x)) < 1e-9
+
+
+SPRITES = ["owl_a_open", "owl_a_closed", "owl_b_open", "owl_b_closed", "owl_me_open", "owl_me_closed",
+           "lighthouse_on", "lighthouse_off", "ship_on", "ship_off", "camera_open", "camera_shut",
+           "customer_1", "customer_2", "customer_3", "desk_bell"]
+
+
+def test_assets_present():
+    base = A.assets_dir()
+    for name in SPRITES:
+        assert os.path.isfile(os.path.join(base, "sprites", name + ".png")), name
+    bank = A.SampleBank()
+    names = {"count", "count_accent", "dull", "ui_move", "ui_ok", "stamp"}
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        names |= {st.hit_sound} | {c.sound for c in st.cues}
+    for n in names:
+        y = A.load_wav(bank.path(n))
+        assert y.shape[1] == 2 and len(y) > 100 and abs(y).max() > 0.05, n
+    # every music role used by the code has a file
+    roles = A.music_manifest()
+    used = {"home", "select", "settings", "rest", "jingle_medley"}
+    from blinkythm.game.screens import JINGLES, RESULT_MUSIC
+    used |= set(JINGLES) | set(RESULT_MUSIC) | {S.make_stage(k).song for k in S.ORDER}
+    for r in used:
+        assert r in roles and os.path.isfile(os.path.join(A.music_dir(), roles[r]["file"])), r
+
+
+def _sdl_audio():
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+
+def test_stage_tempo_comes_from_its_song():
+    roles = A.music_manifest()
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        info = roles[st.song]
+        assert st.bpm == info["bpm"]
+        # the song is long enough for the whole chart after its first downbeat
+        assert info["first_downbeat"] + st.seconds <= info["seconds"] + 0.01, key
+
+
+def test_render_stage_track():
+    _sdl_audio()
+    bank = A.SampleBank()
+    for key in S.ORDER:
+        st = S.make_stage(key)
+        buf = A.render_stage(st, bank)
+        assert buf.shape[1] == 2 and len(buf) >= st.seconds * A.SR
+        assert abs(buf).max() <= 0.951
+        # the song is under the whole chart: no silent stretch before the final fade
+        hop = A.SR // 4
+        first = int(S.COUNT_IN * st.beat_sec * A.SR)       # songs may open with a sparse bar under the count-in
+        rms = [float(np.sqrt((buf[i:i + hop] ** 2).mean())) for i in range(first, int(st.length * st.beat_sec * A.SR) - hop, hop)]
+        assert min(rms) > 0.01, (key, min(rms))
+        # the cue sounds are mixed in where they play
+        song_only = A.render_stage(type(st)(**{**st.__dict__, "cues": []}), bank)
+        c = st.cues[0]
+        i = int(c.beat * st.beat_sec * A.SR)
+        assert abs(buf[i:i + 2000] - song_only[i:i + 2000]).max() > 0.1
+
+
+def test_feedback_and_combine():
+    _, a = simulate("lighthouse")
+    _, b = simulate("owls", sigma=0.12, seed=3)
+    m = R.combine([a, b])
+    assert m["total"] == a["total"] + b["total"]
+    assert len(m["sections"]) == 2
+    lines = R.feedback(m, ["Lighthouse", "Owl Choir"])
+    assert 1 <= len(lines) <= 3
+    empty = R.make_summary({g: (5 if g == R.MISS else 0) for g in R.GRADES}, 5, [], 0, 0, [0.0, 0.0])
+    assert "face" in R.feedback(empty, ["A", "B"])[0]
+    assert R.rank_of(90) == "Superb" and R.rank_level(10) == 3
+
+
+def test_next_stage_rotation():
+    assert S.next_stage("") == S.ORDER[0]
+    assert S.next_stage(S.ORDER[-1]) == S.ORDER[0]
+    assert S.next_stage(S.ORDER[0]) == S.ORDER[1]
+
+
+def test_calibrator_running_offset():
     rnd = random.Random(3)
     t0 = 50.0
-    true_lag = 0.21                    # 사람 반응 + 장치 지연
-    beats = [t0 + k * R.CAL_BEAT for k in range(R.CAL_TICKS)]
-    onsets = [b + true_lag + rnd.gauss(0, 0.04) for b in beats[R.CAL_SKIP:]]
-    off, sd, n = R.compute_offset(onsets, t0)
-    assert abs(off - true_lag) < 0.03 and n >= 6
-    # 엉망으로 깜빡이면 실패 처리
-    bad = [t0 + 3 + rnd.random() * 5 for _ in range(8)]
-    assert R.compute_offset(bad, t0) is None
-    # 너무 적으면 실패
-    assert R.compute_offset(onsets[:3], t0) is None
+    true_lag = 0.21                    # human reaction + device delay
+    c = R.Calibrator(t0)
+    for k in range(2, 7):
+        c.add(t0 + k * R.CAL_BEAT + true_lag + rnd.gauss(0, 0.04))
+    assert not c.state()[3]            # fewer than CAL_MIN_HITS blinks: not ready yet
+    for k in range(7, 14):
+        c.add(t0 + k * R.CAL_BEAT + true_lag + rnd.gauss(0, 0.04))
+    off, sd, n, ready = c.state()
+    assert ready and abs(off - true_lag) < 0.03 and n >= R.CAL_MIN_HITS
+    # one stray blink half a beat away is ignored
+    c.add(t0 + 20 * R.CAL_BEAT + 0.5)
+    assert abs(c.state()[0] - true_lag) < 0.03
+    # early blinks fold to negative values
+    assert R.fold_to_beat(t0 + 3 * R.CAL_BEAT - 0.1, t0) < 0
+    # erratic blinking never becomes ready
+    bad = R.Calibrator(t0)
+    for k in range(20):
+        bad.add(t0 + k * R.CAL_BEAT + rnd.uniform(-0.45, 0.45))
+    assert not bad.state()[3]
+    c.reset()
+    assert c.state() == (None, None, 0, False)
 
 
 def test_suggest_shift():
     j, resp = make_judge()
     for n in resp[:12]:
         j.on_blink(n.time + 0.06)
-    s = j.summary()
+    s = j.summary(3)
     assert abs(R.suggest_offset_shift(s) - 0.06) < 1e-6
     j2, resp2 = make_judge()
     for n in resp2[:12]:
@@ -199,7 +351,238 @@ def test_suggest_shift():
     assert R.suggest_offset_shift(j2.summary()) is None
 
 
+# --------------------------------------------------------------------- app and windows (drawn without a display)
+def _headless_app():
+    import tempfile
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+    cfg = tempfile.mkdtemp()
+    os.environ["XDG_CONFIG_HOME"] = cfg         # keep test settings away from the real ones
+    os.environ["APPDATA"] = cfg
+    from blinkythm.app import App
+    app = App(sim=True, window_size=(768, 432), tray=False)
+    return app
+
+
+def _frames(app, n=3, dt=0.02):
+    import time
+    for _ in range(n):
+        app.step(time.perf_counter())
+        time.sleep(dt)
+
+
+def _home(app):
+    from blinkythm.game.screens import HomeScreen
+    app.settings.first_run_done = True
+    app.window.show(HomeScreen(app.window))
+    _frames(app)
+    return app.window
+
+
+def test_window_scale_fits_desktop():
+    from blinkythm.game import gfx as G
+    assert G.initial_window_size(1920, 1080) == (1536, 864)
+    assert G.initial_window_size(3840, 2160) == (3072, 1728)       # 4K: 8x
+    assert G.initial_window_size(1366, 768) == (768, 432)
+    assert G.fit_scale(1000, 600) == 2 and G.fit_scale(100, 100) == 1
+
+
+def test_first_run_setup():
+    import pygame
+    from blinkythm.game import system as SY
+    from blinkythm.game.screens import HomeScreen
+    app = _headless_app()
+    try:
+        w = app.window
+        _frames(app)
+        assert w.visible and isinstance(w.screen, SY.SetupCameraScreen)
+        assert not w.screen.buttons[0].enabled            # waits until a face has been seen for a moment
+        w.screen.key(pygame.K_RIGHT)                      # sensitivity row is selected first
+        assert app.settings.blink_sensitivity == 2 and app.tracker.detector.close_ratio == 0.78
+        w.screen.key(pygame.K_LEFT)
+        w.screen.face_since = 0.0
+        _frames(app, 2)
+        assert w.screen.buttons[0].enabled
+        w.screen.key(pygame.K_RETURN)
+        _frames(app, 14)
+        cal = w.screen
+        assert isinstance(cal, SY.SetupCalibScreen) and cal.cal is not None
+        assert w.busy                                     # calibration blinks stay out of the statistics
+        # the metronome loops on its own channel instead of a long buffer that can run out
+        assert pygame.mixer.Channel(0).get_busy() and app.audio._loop.get_length() == R.CAL_BEAT * 4
+        for k in range(1, 13):
+            cal.blink(cal.t0 + k * R.CAL_BEAT + 0.15 + (0.01 if k % 2 else -0.01))
+        _frames(app, 2)
+        assert cal.buttons[0].enabled
+        cal.key(pygame.K_RETURN)
+        _frames(app, 14)
+        assert isinstance(w.screen, SY.SetupFinishScreen)
+        w.screen.key(pygame.K_RETURN)
+        _frames(app, 14)
+        assert isinstance(w.screen, HomeScreen)
+        assert app.settings.first_run_done and abs(app.settings.latency_offset - 0.15) < 0.02
+    finally:
+        app.shutdown()
+
+
+def test_settings_screen():
+    import pygame
+    from blinkythm.game import system as SY
+    from blinkythm.game.screens import HomeScreen
+    app = _headless_app()
+    try:
+        w = _home(app)
+        w.screen.key(pygame.K_s)
+        _frames(app, 14)
+        st = w.screen
+        assert isinstance(st, SY.SettingsScreen)
+        assert st.rows[st.sel].label == "Screen time before checking"
+        before = app.settings.screen_minutes
+        st.key(pygame.K_RIGHT)
+        assert app.settings.screen_minutes == before + 1
+        for _ in range(6):                                # down to "Monitor blinking"
+            st.key(pygame.K_DOWN)
+        assert st.rows[st.sel].label == "Monitor blinking"
+        on = app.settings.monitoring
+        st.key(pygame.K_RETURN)
+        assert app.settings.monitoring is (not on)
+        for _ in range(30):                               # the list scrolls to the last row
+            st.key(pygame.K_DOWN)
+        _frames(app)
+        assert st.rows[st.sel].label == "Exit Blinkythm" and st.scroll > 0
+        st.key(pygame.K_ESCAPE)
+        _frames(app, 14)
+        assert isinstance(w.screen, HomeScreen)
+    finally:
+        app.shutdown()
+
+
+def test_reminder_popup_opens_game():
+    import pygame
+    import time
+    from blinkythm.game.screens import HomeScreen
+    app = _headless_app()
+    try:
+        w = _home(app)
+        w.hide()
+        assert not w.visible and app.audio._music_role is None
+        app._show_prompt(time.perf_counter())
+        p = app.prompt
+        _frames(app, 2)
+        play = p.buttons[0]
+        click = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(play.rect.centerx * p.scale, play.rect.centery * p.scale))
+        p.handle_event(click)
+        assert not p.done                                 # not armed in the first moment
+        p.t_open -= 2
+        _frames(app)
+        p.handle_event(click)
+        _frames(app)
+        assert p.done and app.prompt is None
+        assert app.audio._music_role == "home"
+        assert w.visible and w.from_prompt and isinstance(w.screen, HomeScreen)
+    finally:
+        app.shutdown()
+
+
+def test_game_screens_render_and_flow():
+    import pygame
+    from blinkythm.game import screens as SC
+    app = _headless_app()
+    try:
+        g = _home(app)
+        assert app.audio._music_role == "home" and pygame.mixer.music.get_busy()
+        g.screen.key(pygame.K_g)
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.SelectScreen)
+        assert app.audio._music_role == "select"
+        g.screen.key(pygame.K_RIGHT)
+        g.screen.key(pygame.K_RETURN)
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.PlayScreen) and g.screen.stage.key == S.ORDER[1]
+        assert g.busy and app.audio._music_role is None      # the game's own mix plays instead
+        ps = g.screen
+        # treat it as a blink on the first note
+        n = ps.stage.notes[0]
+        ps.blink(n.time + 0.01)
+        assert ps.judge.matched[0].grade == R.PERFECT
+        _frames(app, 2)
+        # skip to the end of the track to reach the result
+        ps.t0 -= ps.stage.seconds + 1
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.ResultScreen)
+        assert app.settings.stamps == 1 and g.daily()["plays"] == 1
+        assert app.settings.last_stage == S.ORDER[1]
+        g.screen.t_enter -= 2
+        _frames(app, 2)
+        g.screen.music_at = 0.0                           # skip waiting for the jingle to end
+        _frames(app, 2)
+        assert app.audio._music_role in SC.RESULT_MUSIC
+        g.screen.key(pygame.K_RETURN)
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.RestScreen) and app.audio._music_role == "rest"
+        g.screen.t_enter -= SC.REST_SECONDS + 0.1
+        _frames(app, 2)
+        assert g.screen.finished and g.daily()["rests"] == 1
+    finally:
+        app.shutdown()
+
+
+def test_medley_and_double_blink():
+    import pygame
+    from blinkythm.game import screens as SC
+    app = _headless_app()
+    try:
+        g = _home(app)
+        # a double blink on the home screen starts the suggested game
+        g._on_blink(10.0)
+        g._on_blink(10.3)
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.PlayScreen)
+        g.screen.key(pygame.K_ESCAPE)
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.SelectScreen)
+        g.start(list(S.ORDER))
+        _frames(app, 14)
+        for i in range(len(S.ORDER)):
+            ps = g.screen
+            assert isinstance(ps, SC.PlayScreen) and ps.stage.key == S.ORDER[i]
+            ps.t0 -= ps.stage.seconds + 1
+            _frames(app, 3)
+            if i < len(S.ORDER) - 1:
+                assert isinstance(g.screen, SC.InterludeScreen)
+                g.screen.t_enter -= SC.INTERLUDE + 0.1
+                _frames(app, 3)
+        _frames(app, 14)
+        assert isinstance(g.screen, SC.ResultScreen) and g.screen.medley
+        assert len(g.screen.sm["sections"]) == len(S.ORDER)
+    finally:
+        app.shutdown()
+
+
+
+def test_face_model_loads():
+    """The blink-score model loads when present (the release build downloads it first)."""
+    from blinkythm.tracker import CameraTracker, MODEL_FILE
+    path = os.path.join(A.assets_dir(), "models", MODEL_FILE)
+    try:
+        import mediapipe as mp
+    except Exception:
+        print("skip: mediapipe not installed")
+        return
+    if not os.path.isfile(path):
+        print("skip: model not downloaded (python tools/get_model.py)")
+        return
+    tr = CameraTracker(UsageMonitor(Settings()))
+    lm = tr._landmarker(mp)
+    assert lm is not None
+    import numpy as np
+    res = lm.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.zeros((480, 640, 3), np.uint8)), 0)
+    assert res.face_blendshapes == []                  # no face in a black frame
+    lm.close()
+
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):          # avoid encoding errors on the Windows console (cp1252)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     fails = 0
     for k, v in list(globals().items()):
         if k.startswith("test_"):

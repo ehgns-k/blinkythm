@@ -5,3 +5,4 @@ dist/
 *.spec
 assets/*.ico
 .venv/
+assets/models/
