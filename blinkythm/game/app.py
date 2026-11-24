@@ -1,6 +1,6 @@
-"""게임 창(pygame-ce). Tk 메인 루프 안에서 자체 루프를 돌리며, 매 프레임 Tk 이벤트도 함께 처리한다.
+"""Game window (pygame-ce). Runs its own loop inside the Tk main loop and processes Tk events every frame.
 
-트레이, 알림, 설정 창은 Tk에 그대로 두고, 게임 화면만 이 창에서 그린다.
+The tray, prompt and settings stay in Tk; only the game is drawn in this window.
 """
 import datetime
 import queue
@@ -15,7 +15,7 @@ from .screens import HomeScreen, PlayScreen
 
 FPS = 60
 FADE = 0.16
-DOUBLE_BLINK = (0.12, 0.70)          # 두 번 깜빡임으로 볼 간격(초)
+DOUBLE_BLINK = (0.12, 0.70)          # gap that counts as a double blink (s)
 UI_SOUNDS = ["ui_move", "ui_ok", "stamp"]
 
 
@@ -41,7 +41,7 @@ class GameApp:
         self.running = False
         self.fullscreen = False
 
-    # ------------------------------------------------------------------ 수명
+    # ------------------------------------------------------------------ lifecycle
     def open(self, headless_size=None):
         pygame.display.init()
         pygame.font.init()
@@ -76,7 +76,7 @@ class GameApp:
         self.running = False
 
     def run(self):
-        """창을 열고 닫힐 때까지 돈다. Tk 이벤트는 root.update()로 함께 처리한다."""
+        """Open the window and loop until it closes. Tk events are handled with root.update()."""
         import tkinter as tk
         self.open()
         clock = pygame.time.Clock()
@@ -86,7 +86,7 @@ class GameApp:
                 clock.tick(FPS)
                 try:
                     self.app.root.update()
-                except tk.TclError:       # 트레이에서 프로그램을 끝낸 경우
+                except tk.TclError:       # the app was quit from the tray
                     break
         finally:
             self.shutdown()
@@ -94,7 +94,7 @@ class GameApp:
     def close(self):
         self.running = False
 
-    # ------------------------------------------------------------------ 한 프레임
+    # ------------------------------------------------------------------ one frame
     def frame(self, now=None):
         now = time.perf_counter() if now is None else now
         for ev in pygame.event.get():
@@ -153,7 +153,7 @@ class GameApp:
         else:
             self.window = pygame.display.set_mode(self._windowed, pygame.RESIZABLE)
 
-    # ------------------------------------------------------------------ 화면 전환
+    # ------------------------------------------------------------------ screen changes
     def go(self, screen, fade=True):
         self._next = screen
         self._fade_t = time.perf_counter() if fade else None
@@ -164,14 +164,14 @@ class GameApp:
         self._next = None
         self.screen.enter()
         if self._fade_t is not None:
-            self._fade_t = time.perf_counter() - FADE     # 이어서 밝아지게
+            self._fade_t = time.perf_counter() - FADE     # continue with the fade-in
 
     def start(self, keys):
         keys = list(keys)
         first = keys.pop(0)
         self.go(PlayScreen(self, first, keys, []))
 
-    # ------------------------------------------------------------------ 도움 기능
+    # ------------------------------------------------------------------ helpers
     def sound(self, name):
         self.audio.play_sfx(name)
 
@@ -216,7 +216,7 @@ class GameApp:
         s = self.settings
         s.latency_offset += shift
         s.save()
-        return "보정값 %+d ms로 바꿨어요" % round(s.latency_offset * 1000)
+        return "Offset is now %+d ms" % round(s.latency_offset * 1000)
 
     def after_rest(self):
         if self.from_prompt:

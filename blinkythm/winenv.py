@@ -1,4 +1,4 @@
-"""Windows 환경 연동: 작업 영역, 전체화면/발표 감지, 시작프로그램 등록, DPI. 다른 OS에서는 안전하게 무시."""
+"""Windows integration: work area, fullscreen/presentation detection, autostart, DPI. Safe no-ops elsewhere."""
 import os
 import sys
 
@@ -21,7 +21,7 @@ def enable_dpi_awareness():
 
 
 def work_area(root):
-    """작업 표시줄을 뺀 사용 가능 영역 (left, top, right, bottom)."""
+    """Usable area without the taskbar (left, top, right, bottom)."""
     if IS_WIN:
         import ctypes
         from ctypes import wintypes
@@ -32,14 +32,14 @@ def work_area(root):
 
 
 def is_busy():
-    """전체화면 게임/영상, 발표 모드, 방해 금지 상태이면 True."""
+    """True during fullscreen games or video, presentation mode, or do-not-disturb."""
     if not IS_WIN:
         return False
     import ctypes
     try:
         state = ctypes.c_int(0)
         if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0:
-            # 2 busy, 3 D3D 전체화면, 4 발표 모드
+            # 2 busy, 3 D3D fullscreen, 4 presentation mode
             return state.value in (2, 3, 4)
     except Exception:
         pass

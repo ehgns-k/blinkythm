@@ -1,15 +1,15 @@
-"""웹캠 -> 눈 뜸 정도(EAR) -> BlinkDetector. 영상은 메모리에서만 처리하고 저장/전송하지 않는다."""
+"""Webcam -> eye openness (EAR) -> BlinkDetector. Frames stay in memory and are never saved or sent."""
 import sys
 import threading
 import time
 
 from .detector import BlinkDetector
 
-# MediaPipe FaceMesh 눈 랜드마크 (p1, p2, p3, p4, p5, p6)
+# MediaPipe FaceMesh eye landmarks (p1, p2, p3, p4, p5, p6)
 RIGHT_EYE = (33, 160, 158, 133, 153, 144)
 LEFT_EYE = (362, 385, 387, 263, 373, 380)
 
-MONITOR_FPS = 15.0      # 평소(백그라운드) 처리 속도
+MONITOR_FPS = 15.0      # processing rate in the background
 GAME_FPS = 30.0
 
 
@@ -26,7 +26,7 @@ def _ear(lm, idx, w, h):
 
 
 class BaseTracker:
-    """UI가 쓰는 공통 인터페이스."""
+    """Interface the UI uses."""
 
     def __init__(self, monitor):
         self.monitor = monitor
@@ -34,11 +34,11 @@ class BaseTracker:
         self.game_mode = False
         self.face_visible = False
         self.error = None
-        self.frame_dt = 1 / 30           # 최근 프레임 간격(초)
+        self.frame_dt = 1 / 30           # recent frame interval (s)
         self._listeners = []
         self._lock = threading.Lock()
 
-    # 감기 시작 이벤트 구독: cb(onset_time)
+    # Subscribe to eye-closing events: cb(onset_time)
     def add_listener(self, cb):
         with self._lock:
             self._listeners.append(cb)
@@ -63,7 +63,7 @@ class BaseTracker:
 
     @property
     def ear_ratio(self):
-        """0(감김)~1(평소 뜬 상태) 정도로 정규화한 값. 표시용."""
+        """Openness from 0 (closed) to about 1 (normally open). For display only."""
         e = self.detector.ear
         if e is None:
             return None
@@ -107,12 +107,12 @@ class CameraTracker(BaseTracker):
             import cv2
             import mediapipe as mp
         except Exception as e:
-            self.error = "필요한 라이브러리를 불러오지 못했습니다: %s" % e
+            self.error = "Could not load a required library: %s" % e
             return
         backend = cv2.CAP_DSHOW if sys.platform == "win32" else 0
         cap = cv2.VideoCapture(self.camera_index, backend)
         if not cap.isOpened():
-            self.error = "카메라 %d번을 열 수 없습니다. 다른 프로그램이 사용 중이거나 개인정보 설정에서 차단되었을 수 있습니다." % self.camera_index
+            self.error = "Cannot open camera %d. Another app may be using it, or privacy settings may block it." % self.camera_index
             return
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -126,11 +126,11 @@ class CameraTracker(BaseTracker):
         try:
             while not self._stop.is_set():
                 ok, frame = cap.read()
-                t = time.perf_counter()        # 프레임을 받은 시각. 장치 지연은 보정 마법사가 흡수
+                t = time.perf_counter()        # time the frame arrived; device delay is covered by calibration
                 if not ok:
                     fails += 1
                     if fails > 60:
-                        self.error = "카메라에서 영상을 받지 못했습니다."
+                        self.error = "No video from the camera."
                         break
                     time.sleep(0.02)
                     continue
@@ -162,7 +162,7 @@ class CameraTracker(BaseTracker):
 
 
 class SimTracker(BaseTracker):
-    """카메라 없이 UI/판정을 시험하기 위한 가짜 트래커. 게임 창에서 스페이스바 = 깜빡임."""
+    """Fake tracker for testing the UI and judging without a camera. Space in the game window = blink."""
 
     def __init__(self, monitor, latency_offset=0.0):
         super().__init__(monitor)
@@ -184,7 +184,7 @@ class SimTracker(BaseTracker):
         pass
 
     def press(self):
-        """스페이스 입력: 감기 시작 이벤트를 흉내 낸다."""
+        """Space key: simulate the start of a blink."""
         now = time.perf_counter()
         self._close_until = now + 0.12
         self._on_close(now + self._latency)

@@ -1,142 +1,139 @@
-# Blinkythm - 눈 깜빡임 리듬
+# Blinkythm
 
-웹캠으로 눈 깜빡임 빈도를 살피다가, 화면을 오래 보고 깜빡임이 줄어들면 짧은 리듬 게임을 제안하는 Windows용 프로그램입니다.
-입력은 눈 깜빡임 하나뿐이며, 박자를 알려 주는 방식이 서로 다른 미니게임 세 가지(한 판 약 35초)와 세 게임을 잇는 메들리가 있습니다.
+Blinkythm watches how often you blink through your webcam. When you have been at the screen for a long time and your blink rate drops, it offers a short rhythm game that you play by blinking. Windows only.
 
-## 키워드
+There are three minigames (about 35 seconds each) and a medley that plays all three. Blinking is the only input.
 
-| 키워드 | 뜻 | 화면과 게임에 반영한 것 |
-|---|---|---|
-| 건강 | 목적은 점수가 아니라 눈을 쉬게 하는 것 | 홈의 "오늘의 눈"(화면 본 시간, 분당 깜빡임, 쉰 횟수), 판이 끝나면 먼 곳 보기 20초 |
-| 캐주얼 | 배우지 않아도 바로 할 수 있음 | 홈에서 시작 한 번, 실패로 끝나는 일 없음, 놓쳐도 곡은 끝까지 감 |
-| 짧게 | 한 판 40초 이내 | 4박 세기 후 바로 시작, 메들리는 고를 때만 |
-| 다정하게 | 꾸짖지 않음 | 도장 이름은 "최고예요/잘했어요/좋아요/푹 쉬었어요", 박자 밖 깜빡임은 감점 없음 |
-| 눈으로 | 손을 쓰지 않아도 됨 | 홈, 고르기, 결과에서 눈을 두 번 깜빡이면 첫 버튼 실행, 화면 구석에 내 눈 상태 표시 |
+## Install and run
 
-## 설치와 실행
+**Release build:** download `Blinkythm-*-win64.zip` from Releases, unzip it and run `Blinkythm.exe`.
 
-**설치 파일로 쓰기**: Releases에서 `Blinkythm-*-win64.zip`을 받아 압축을 풀고 `Blinkythm.exe`를 실행합니다.
-
-**소스로 실행**: Python 3.10~3.12 (Windows, 웹캠 필요)
+**From source:** Python 3.10 to 3.12 on Windows, with a webcam.
 
     pip install -r requirements.txt
     python main.py
 
-처음 실행하면 설정 마법사가 열립니다(카메라 확인, 타이밍 보정, 옵션). 마법사가 끝나면 트레이로 들어가 백그라운드에서 동작합니다.
-`Blinkythm.bat`로 콘솔 창 없이 실행할 수 있습니다.
+On first run a setup wizard checks the camera, measures input delay and sets a few options. After that the app lives in the tray. `Blinkythm.bat` starts it without a console window.
 
-## 게임 창
+Test options:
 
-게임 창은 pygame-ce로 그립니다. 384×216 픽셀 화면에 그림과 글자를 모두 그린 뒤, 창 크기에 맞춰 정수배로 확대합니다.
-처음 크기는 모니터의 80% 안에 들어가는 가장 큰 배수입니다(1920×1080이면 4배 1536×864, 3840×2160이면 8배 3072×1728).
-창 크기를 바꾸면 배율이 다시 맞춰지고 남는 부분은 어둡게 채웁니다. F11은 전체 화면입니다.
-글자는 비트맵 한글 글꼴 Galmuri를 써서 그림과 같은 픽셀 격자에 놓입니다.
+- `--sim`: no camera. Space stands in for a blink in the game and the wizard.
+- `--demo`: the prompt appears after 12 seconds of screen time. Settings are not saved.
+- `--background`: start hidden (used by autostart).
 
-화면 흐름: 알림 → 홈 → (게임 고르기) → 플레이 → 결과(도장) → 먼 곳 보기 20초 → 홈, 알림에서 열었으면 창 닫힘
+## Design goals
 
-| 화면 | 키 |
-|---|---|
-| 홈 | Enter 시작(오늘의 게임), G 게임 고르기, S 설정 창, Esc 닫기 |
-| 게임 고르기 | ←/→ 게임, Enter 시작, M 메들리, Esc 뒤로 |
-| 플레이 | Esc 그만두기 |
-| 결과 | Enter 눈 쉬러 가기, R 다시, G 고르기, A 보정값 반영(제안이 있을 때) |
-| 먼 곳 보기 | Esc 건너뛰기(쉰 횟수에 넣지 않음) |
-
-마우스로도 버튼과 게임 타일을 누를 수 있습니다. 트레이, 알림, 설정 창, 보정 마법사는 Windows 기본 모양의 Tk 창으로 남아 있습니다.
-게임 창은 Tk 메인 루프 안에서 자체 루프(60fps)를 돌며 매 프레임 Tk 이벤트도 함께 처리하므로, 게임 중에도 트레이 메뉴와 설정 창이 동작합니다.
-
-시험용 옵션
-- `--sim`: 카메라 없이 실행. 게임/마법사에서 스페이스바가 눈 깜빡임을 대신합니다.
-- `--demo`: 화면 사용 12초 만에 알림이 뜨도록 조건을 낮춥니다(설정은 저장되지 않습니다).
-- `--background`: 창을 숨기고 시작합니다(자동 실행 등록 시 이 옵션이 쓰입니다).
-
-## 미니게임
-
-| 게임 | 방식 | 하는 일 | 길이 |
-|---|---|---|---|
-| 등대 신호 | 따라 하기 | 등대가 한 마디(4박) 동안 보낸 불빛 신호를 다음 마디에 같은 박자로 깜빡여 돌려준다. 6라운드. | 약 35초 |
-| 올빼미 합창 | 이어 가기 | 첫째와 둘째 올빼미가 운 간격만큼 기다렸다가 세 번째로 깜빡인다. 간격은 1박, 0.5박, 1.5박, 2박. | 약 37초 |
-| 깜빡 사진관 | 2박 뒤에 | 손님이 종을 치면 언제나 정확히 2박 뒤에 깜빡여 셔터를 누른다. 종이 겹쳐 울리거나 박 사이에 울리기도 한다. | 약 33초 |
-| 메들리 | 모두 | 세 게임을 차례로 한다. 게임 사이에 3.5초 쉰다. | 약 2분 |
-
-- 홈의 "오늘의 게임"은 지난번에 한 게임의 다음 게임입니다. Enter 한 번(또는 눈 두 번 깜빡임)으로 바로 시작합니다.
-- 각 게임은 4박 세기로 시작합니다. 반주는 게임마다 다르고(92, 100, 112 BPM), 신호음은 반주와 함께 미리 한 버퍼로 합성해 재생하므로 화면이 버벅여도 박자가 흔들리지 않습니다.
-- 화면 아래 가이드 막대는 8박 단위로 넘어갑니다. 윗줄은 들린 신호, 아랫줄은 내가 깜빡일 자리입니다. 깜빡일 자리는 그 자리를 알려 주는 신호가 나온 뒤에야 점선으로 나타납니다(설정에서 끌 수 있음).
-- 결과 화면은 도장, 정확도, 판정 개수, 구간별(메들리는 게임별) 정확도, 타이밍 분포를 보여 주고 가장 좋았던 구간과 약했던 구간을 한 줄로 알려 줍니다. 게임별 최고 기록이 저장됩니다.
-- 한 판을 끝낼 때마다 홈의 도장판에 도장이 하나 찍힙니다(10칸). 매일 이어 해야 하는 연속 기록은 두지 않습니다.
-
-## 알림 조건
-
-다음을 모두 만족할 때 화면 오른쪽 아래에 알림이 뜹니다. 값은 설정 탭에서 바꿉니다.
-
-1. 얼굴이 계속 보인 시간(화면 사용 시간)이 기준(기본 20분) 이상
-2. 최근 1분간 깜빡임이 분당 기준(기본 12회) 미만. 얼굴이 40초 이상 보이지 않았다면 판단하지 않습니다.
-3. 전체 화면 게임/영상, 발표 모드가 아님 (Windows 알림 상태 API로 확인)
-4. "다시 알림" 대기 시간이나 게임 후 중단 시간이 끝난 상태
-
-얼굴이 90초 이상 사라지면 자리를 비운 것으로 보고 화면 사용 시간을 0으로 되돌립니다. 게임을 한 판 끝내도 0으로 돌아갑니다.
-알림창은 키 입력을 가로채지 않도록 기본 버튼 없이 뜨고, 처음 1.2초 동안은 버튼이 눌리지 않습니다. 90초 동안 응답이 없으면 "다시 알림"으로 처리합니다.
-
-## 판정 설계
-
-입력 시각은 "눈을 감기 시작한 순간"입니다. 프레임 두 장 사이에서 눈 뜸 정도(EAR)가 임계값을 가로지른 시점을 선형 보간해 구하므로
-30fps 카메라(프레임 간격 33ms)에서도 그보다 세밀하게 시각이 잡힙니다. 감기 시작이 두 프레임 연속 확인되면 곧바로 판정하고, 이벤트가 늦게 도착해도 시각은 원래 값을 쓰므로 판정에 영향이 없습니다.
-
-| 등급 | 박자와의 차이 | 점수 |
+| Goal | Meaning | Where it shows |
 |---|---|---|
-| 완벽 | ±70ms 이내 | 100 |
-| 좋음 | ±130ms 이내 | 75 |
-| 아쉬움 | ±200ms 이내 | 40 |
-| 놓침 | 그 밖 | 0 |
+| Health | The point is resting your eyes, not the score | "Your eyes today" on the home screen; a 20-second look-far-away break after each game |
+| Casual | Nothing to learn first | One button to play; you cannot fail out; a miss never stops the song |
+| Short | Under 40 seconds a game | Play starts after a 4-beat count-in; the medley is opt-in |
+| Gentle | No scolding | Stamps read Superb, Nice, Good and Rested; blinks off the beat cost nothing |
+| Hands-free | Eyes are enough | Blink twice to press the main button on home, game select and results; your eye state is shown in the corner |
 
-- 키보드 게임보다 창이 넓은 이유: 웹캠 프레임 간격과, 눈 감기를 박자에 맞추는 사람의 편차가 크기 때문입니다. 카메라가 30fps보다 느리면 창이 자동으로 더 넓어집니다.
-- 장치 지연 보정: 웹캠·소리 출력의 지연은 장치마다 다릅니다. 마법사에서 메트로놈에 맞춰 8번 깜빡이면 박자 주기로 접은 오차의 중앙값을 구해 저장합니다. 편차가 크면 측정을 거부합니다.
-- 박자와 무관한 평소 깜빡임은 감점하지 않습니다. 어떤 노트와도 ±200ms 안에서 맞지 않는 입력은 무시하고 결과 화면에만 횟수를 표시합니다.
-- 한 번의 깜빡임은 가장 가까운 아직 판정되지 않은 노트 하나에만 대응합니다. 노트 사이 간격은 모든 게임에서 0.5초 이상으로 잡아, 한 깜빡임이 엉뚱한 노트에 붙지 않게 했습니다(시험으로 확인).
-- 잘 맞히면 게임마다 정해진 소리(배의 종, 내 올빼미 울음, 셔터)가 나고, "아쉬움"이면 그 소리가 작게 둔탁한 소리와 함께 납니다.
-- 놓침은 노트 시각 + 창 + 0.18초가 지나야 확정합니다(입력 이벤트가 늦게 도착할 수 있기 때문).
-- 0.8초보다 길게 감은 것은 깜빡임 통계에서 제외합니다(졸음/휴식).
-- 결과 화면에 박자 대비 분포를 보여 주고, 평균 오차가 한쪽으로 30ms 이상 치우치면 보정값 반영을 제안합니다.
-- 도장: 정확도 85% 이상 "최고예요", 65% 이상 "잘했어요", 40% 이상 "좋아요", 그 밖은 "푹 쉬었어요".
+## Minigames
 
-## 개인정보
+| Game | Type | What you do | Length |
+|---|---|---|---|
+| Lighthouse | Copy | The lighthouse flashes a rhythm over one bar. Blink it back in the next bar. 6 rounds. | 35 s |
+| Owl Choir | Continue | Two owls hoot with a gap between them. Wait the same gap and blink. Gaps are 1, 1/2, 1 1/2 and 2 beats. | 37 s |
+| Blink Studio | 2 beats later | A customer rings the desk bell. Blink exactly 2 beats later to take the photo. Bells can overlap or fall between beats. | 33 s |
+| Medley | All | The three games in a row with a 3.5 s break between them. | 2 min |
 
-영상은 메모리에서 눈 랜드마크를 계산하는 데만 쓰이고 저장하거나 전송하지 않습니다. 네트워크 기능이 없습니다.
+- The home screen suggests the game after the one you played last. Enter, or a double blink, starts it.
+- Each game opens with a 4-beat count-in. The backing track (92, 100 or 112 BPM) and all cues are mixed into one buffer before playback, so a slow frame cannot shift the beat.
+- The guide strip at the bottom shows 8 beats at a time. The top row shows cues you have heard, the bottom row where to blink. A blink spot appears only after its cue has played. The guide can be turned off in Settings.
+- The result screen shows a stamp, accuracy, grade counts, accuracy per section (per game in the medley) and the timing spread, plus a line on your strongest and weakest section. Best scores are saved per game.
+- Every finished game adds a stamp to the 10-slot card on the home screen. There are no daily streaks.
 
-## 구성
+## Game window
 
-    main.py                 진입점
-    blinkythm/detector.py   EAR 시계열 -> 깜빡임 감지 (적응형 임계값, 보간)
-    blinkythm/monitor.py    화면 사용 시간, 분당 깜빡임, 알림 조건
-    blinkythm/stages.py     미니게임 세 가지의 채보(신호, 노트, 구간)와 설명
-    blinkythm/rhythm.py     판정, 구간별 평가, 보정 계산
-    blinkythm/audio.py      WAV 읽기, 한 판 음원 합성, 재생(pygame-ce)
-    blinkythm/tracker.py    웹캠/MediaPipe, 시험용 가짜 트래커
-    blinkythm/game/app.py   게임 창: 창 만들기, 배율, 입력, 화면 전환, Tk와 함께 돌기
-    blinkythm/game/gfx.py   픽셀 화면, 팔레트, 글꼴, 상자/버튼/키 표시
-    blinkythm/game/screens.py  홈, 게임 고르기, 플레이, 메들리 쉬는 시간, 결과, 먼 곳 보기
-    blinkythm/game/scenes.py   게임별 장면(등대, 올빼미, 사진관)
-    blinkythm/ui_*.py       메인 창(상태/설정), 알림, 마법사 (Tk)
-    blinkythm/winenv.py     작업 영역, 전체화면 감지, 시작프로그램 등록
-    assets/sprites/*.png    픽셀 그림(원래 크기로 저장, 게임에서 2~4배로 그림)
-    assets/sounds/*.wav     효과음, 신호음, 반주 루프(44.1kHz 16비트 모노)
-    assets/fonts/           Galmuri 비트맵 글꼴과 라이선스(OFL.txt)
-    tools/make_assets.py    위 PNG/WAV를 만드는 코드: python tools/make_assets.py
-    tools/make_icon.py      exe 아이콘 생성
-    tests/test_core.py      로직과 게임 화면 흐름 시험(창 없이 그림): python tests/test_core.py
+The game window uses pygame-ce. Everything is drawn on a 384x216 pixel screen and scaled by the largest whole number that fits the window. The first size is the largest multiple that fits in 80% of the monitor: 4x (1536x864) on 1920x1080 and 8x (3072x1728) on 3840x2160. Resizing the window rescales it, with dark bars filling the rest. F11 toggles fullscreen. Text uses the Galmuri bitmap font, so letters sit on the same pixel grid as the art.
 
-## 애셋
+Flow: prompt, home, (game select), play, result, 20 s rest, then home. When the game was opened from the prompt, the window closes after the rest.
 
-그림과 소리는 모두 이 프로그램을 위해 `tools/make_assets.py`로 만든 것입니다. 그림은 글자 지도로 그린 픽셀 그림이고,
-소리는 사인파, 잡음, 감쇠 곡선을 조합해 합성했습니다. 난수 시드가 고정되어 있어 다시 실행하면 같은 파일이 나옵니다.
-그림이나 소리를 바꾸려면 이 파일을 고친 뒤 다시 실행하고, 결과 파일을 함께 커밋합니다.
+| Screen | Keys |
+|---|---|
+| Home | Enter play today's game, G games, S settings window, Esc close |
+| Game select | Left/Right choose, Enter play, M medley, Esc back |
+| Play | Esc stop |
+| Result | Enter rest your eyes, R again, G games, A apply the suggested offset |
+| Rest | Esc skip (not counted as a rest) |
 
-글꼴은 Lee Minseo(quiple)가 만든 Galmuri 2.40.3의 비트맵판(Galmuri9, 11, 11 Bold, 14)이며 SIL Open Font License 1.1을 따릅니다.
-npm 패키지 `galmuri`에서 가져왔고, 라이선스 전문은 `assets/fonts/OFL.txt`에 있습니다.
+Buttons and game tiles also work with the mouse. The tray, prompt, settings window and calibration wizard are classic Tk windows. While the game window is open it runs its own 60 fps loop inside the Tk main loop and processes Tk events every frame, so the tray menu and settings still respond.
 
-## 알려진 한계
+## When the prompt appears
 
-- 이 개발 환경에는 웹캠과 Windows가 없어, 감지 로직은 합성한 EAR 시계열(30fps/15fps, 장치 지연, 잡음)로, 화면과 흐름은 Linux 가상 디스플레이에서 키보드 입력으로 시험했습니다. Windows 고해상도 모니터에서의 창 크기는 계산식만 시험했습니다. 실제 웹캠에서의 감지 품질은 사용 환경에서 확인이 필요합니다.
-- 안경 반사, 고개를 많이 숙이거나 돌린 자세, 어두운 조명에서는 EAR이 흔들려 감지율이 떨어질 수 있습니다. 눈 뜸 기준은 최근 30초의 평소 값에서 자동으로 맞춥니다.
-- 소리 출력이 블루투스 이어폰이면 지연이 크고 불안정합니다. 마법사 편차 검사에서 걸러집니다.
-- 개발 환경에 소리 장치가 없어 반주와 효과음은 파형 수치(길이, 최대 음량, 신호음 위치)로만 확인했습니다. 음량 균형은 실제 스피커에서 확인이 필요합니다.
+All of these must hold. The values are on the Settings tab.
+
+1. Your face has been visible (screen time) for at least the set time, 20 minutes by default.
+2. Blinks in the last minute are below the threshold, 12 per minute by default. No decision is made if your face was visible for less than 40 of the last 60 seconds.
+3. No fullscreen game or video and no presentation is running (checked with the Windows notification state API).
+4. Any snooze or post-game quiet time has passed.
+
+If your face is gone for 90 seconds, you are treated as away and screen time resets to zero. Finishing a game resets it too. The prompt has no default button, so typing cannot trigger it, and its buttons do nothing for the first 1.2 seconds. With no answer after 90 seconds it counts as a snooze.
+
+## Judging
+
+The input time is the moment your eyes start to close. The detector interpolates where eye openness (EAR) crosses the threshold between two frames, so the time is finer than the 33 ms frame interval of a 30 fps camera. A blink is judged as soon as the closing has been seen in two frames in a row. Events that arrive late keep their original time, so the delay does not affect the result.
+
+| Grade | Distance from the beat | Points |
+|---|---|---|
+| Perfect | within 70 ms | 100 |
+| Good | within 130 ms | 75 |
+| Close | within 200 ms | 40 |
+| Miss | further | 0 |
+
+- The windows are wider than in keyboard rhythm games because of the webcam frame interval and because people vary more when timing a blink. Cameras slower than 30 fps get wider windows automatically.
+- Webcam and audio delay differ between devices. In the wizard you blink along to 8 metronome ticks; the median error, folded by the beat period, is saved as the offset. Uneven results are rejected.
+- Normal blinks off the beat are not penalised. A blink that is not within 200 ms of any note is ignored and only counted on the result screen.
+- One blink matches at most one note: the nearest one not yet judged. Notes are at least 0.5 s apart in every game, so a blink cannot land on the wrong note (covered by the tests).
+- A good hit plays the game's own sound (ship bell, your owl's hoot, the shutter). A Close plays it quietly with a dull thud.
+- A miss is final only once the note time, the window and 0.18 s have passed, since blink events can arrive late.
+- Closures longer than 0.8 s are left out of the blink statistics (dozing or resting).
+- If the average error leans more than 30 ms to one side, the result screen offers to apply it to the offset.
+- Stamps: 85% or more Superb, 65% Nice, 40% Good, below that Rested.
+
+## Privacy
+
+Video is used in memory to find eye landmarks and is never saved or sent. The app has no network features.
+
+## Layout
+
+    main.py                    entry point
+    blinkythm/detector.py      EAR series -> blinks (adaptive threshold, interpolation)
+    blinkythm/monitor.py       screen time, blink rate, prompt conditions
+    blinkythm/stages.py        charts for the three games (cues, notes, sections) and instructions
+    blinkythm/rhythm.py        judging, section scores, calibration
+    blinkythm/audio.py         WAV loading, rendering a game's audio, playback (pygame-ce)
+    blinkythm/tracker.py       webcam and MediaPipe, fake tracker for tests
+    blinkythm/game/app.py      game window: setup, scaling, input, screen changes, running inside Tk
+    blinkythm/game/gfx.py      pixel screen, palette, fonts, boxes, buttons, key hints
+    blinkythm/game/screens.py  home, game select, play, medley break, result, rest
+    blinkythm/game/scenes.py   the three game scenes
+    blinkythm/ui_*.py          main window (status/settings), prompt, wizard (Tk)
+    blinkythm/winenv.py        work area, fullscreen detection, autostart
+    assets/sprites/*.png       pixel art at 1x (drawn at 2x to 4x in the game)
+    assets/sounds/*.wav        effects, cues and backing loops (44.1 kHz, 16-bit, mono)
+    assets/fonts/              Galmuri bitmap fonts and their license (OFL.txt)
+    tools/make_assets.py       generates the PNG and WAV files: python tools/make_assets.py
+    tools/make_icon.py         builds the exe icon
+    tests/test_core.py         logic tests and headless game-flow tests: python tests/test_core.py
+    docs/releases/             release notes, one file per version
+
+## Assets
+
+All art and sound were made for this project by `tools/make_assets.py`. Sprites are drawn as character maps; sounds are built from sine waves, noise and decay curves. The random seed is fixed, so running the script again gives the same files. To change an asset, edit the script, run it and commit the output.
+
+The fonts are the bitmap versions of Galmuri 2.40.3 by Lee Minseo (quiple): Galmuri9, 11, 11 Bold and 14. They are under the SIL Open Font License 1.1, taken from the npm package `galmuri`. The full license is in `assets/fonts/OFL.txt`.
+
+## Releases
+
+Pushing a `v*` tag builds the exe and publishes a release. The workflow can also be started by hand with a `tag` input, which creates that tag on the chosen commit. Release notes come from `docs/releases/<tag>.md`. To change the notes of an existing release, edit that file and run the workflow by hand with that `tag` and `notes_only` checked.
+
+## Known limitations
+
+- The development machine has no webcam and no Windows. Detection was tested with synthetic EAR series (30 and 15 fps, device delay, noise), and the screens and flow on a Linux virtual display with keyboard input. On Windows, only the window size calculation for high-DPI monitors was tested.
+- Glasses glare, a tilted or turned head and dim light make EAR noisy and lower detection. The open-eye baseline adapts to the last 30 seconds.
+- Bluetooth headphones add large, unstable delay. The wizard's spread check rejects such measurements.
+- With no audio device on the development machine, the music and effects were checked only by their waveforms (length, peak level, cue positions). The mix still needs a listen on real speakers.

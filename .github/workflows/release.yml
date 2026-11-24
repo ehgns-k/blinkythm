@@ -9,12 +9,17 @@ on:
         description: "Release tag to create (e.g. v1.0.1). Leave empty for a test build."
         required: false
         default: ""
+      notes_only:
+        description: "Only replace the notes of an existing release with docs/releases/<tag>.md"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
   windows:
+    if: ${{ !inputs.notes_only }}
     runs-on: windows-latest
     env:
       PYTHONUTF8: "1"
@@ -80,5 +85,17 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Blinkythm ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          body_path: RELEASE_NOTES.md
+          body_path: docs/releases/${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}.md
           files: ${{ env.ASSET }}
+
+  notes:
+    if: ${{ inputs.notes_only && inputs.tag != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Replace release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "docs/releases/$TAG.md"

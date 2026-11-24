@@ -9,7 +9,7 @@ from blinkythm import audio as A
 
 
 def synth_ear(blink_starts, fps, dur, open_ear=0.30, closed=0.10, blink_len=0.15, noise=0.008, seed=1):
-    """blink_starts(진짜 감기 시작 시각)에 맞춰 EAR 시계열 생성. 감기 40ms/뜨기 80ms 사다리꼴."""
+    """EAR series for the given true blink starts. Trapezoid: 40 ms closing, 80 ms opening."""
     rnd = random.Random(seed)
     out = []
     n = int(dur * fps)
@@ -41,7 +41,7 @@ def test_detector_accuracy_30fps():
     closes, blinks = run_detector(synth_ear(starts, 30, 32))
     assert len(closes) == 15 and len(blinks) == 15, (len(closes), len(blinks))
     errs = [c - s for c, s in zip(closes, starts)]
-    # 임계값(72%) 교차 시점은 감기 시작 후 약 40ms*(0.28/0.20)=약 11ms 부근
+    # the 72% threshold is crossed about 40ms*(0.28/0.20), roughly 11 ms after the blink starts
     assert all(-0.01 < e < 0.06 for e in errs), errs
     assert statistics.pstdev(errs) < 0.012
 
@@ -50,7 +50,7 @@ def test_detector_15fps_and_noise_flutter():
     starts = [2 + 2.0 * k for k in range(10)]
     closes, _ = run_detector(synth_ear(starts, 15, 24))
     assert len(closes) == 10
-    # 한 프레임짜리 노이즈 하락은 무시
+    # a one-frame noise dip is ignored
     ser = synth_ear([], 30, 10)
     ser = [(t, 0.05 if i == 100 else e) for i, (t, e) in enumerate(ser)]
     closes, _ = run_detector(ser)
@@ -74,7 +74,7 @@ def test_monitor_trigger():
     s = Settings(screen_minutes=1, blink_threshold=12, away_seconds=30)
     m = UsageMonitor(s)
     t = 0.0
-    # 70초간 보이지만 깜빡임 3회뿐 -> 분당 약 2.6회
+    # visible for 70 s but only 3 blinks -> about 2.6 per minute
     for i in range(int(70 * 15)):
         t = i / 15
         m.on_frame(t, True)
@@ -86,7 +86,7 @@ def test_monitor_trigger():
     assert not m.should_prompt(t, dnd=True)
     m.snooze(t, 5)
     assert not m.should_prompt(t + 100)
-    # 깜빡임이 충분하면 알리지 않음
+    # enough blinks: no prompt
     m2 = UsageMonitor(s)
     for i in range(int(70 * 15)):
         t = i / 15
@@ -102,12 +102,12 @@ def test_monitor_away_reset_and_insufficient_data():
     for i in range(30 * 15):
         m.on_frame(i / 15, True)
     t = 30.0
-    for i in range(60 * 15):       # 60초 자리비움
+    for i in range(60 * 15):       # away for 60 s
         t += 1 / 15
         m.on_frame(t, False)
     assert m.screen_seconds(t) == 0
     m.on_frame(t + 1, True)
-    assert m.blink_rate(t + 1) is None      # 데이터 부족이면 판단 보류
+    assert m.blink_rate(t + 1) is None      # not enough data: no verdict
     assert not m.should_prompt(t + 1)
 
 
@@ -123,29 +123,29 @@ def test_judge_grades_and_signs():
     assert j.on_blink(resp[1].time - 0.10).grade == R.GOOD
     r = j.on_blink(resp[2].time + 0.18)
     assert r.grade == R.OK and r.dt > 0
-    assert j.on_blink(resp[3].time + 0.35) is None       # 창 밖: 자연 깜빡임으로 무시
+    assert j.on_blink(resp[3].time + 0.35) is None       # outside the window: ignored as a natural blink
     assert len(j.stray) == 1
 
 
 def test_judge_offset_and_double_blink():
     j, resp = make_judge(offset=0.09)
-    # 카메라 지연 90ms가 있는 입력도 보정 후 완벽
+    # 90 ms of camera delay still gives a perfect after the offset
     assert j.on_blink(resp[0].time + 0.09).grade == R.PERFECT
-    # 같은 노트에 연속 두 번 -> 두 번째는 다음 노트 창에 닿지 않으므로 stray
+    # a second blink on the same note does not reach the next note's window, so it is stray
     assert j.on_blink(resp[0].time + 0.09 + 0.2) is None
 
 
 def test_judge_miss_waits_for_late_event():
     j, resp = make_judge()
     n = resp[0]
-    assert j.poll(n.time + 0.3) == []           # 창+유예 전에는 놓침 확정 안 함
+    assert j.poll(n.time + 0.3) == []           # no miss before window + grace
     out = j.poll(n.time + 0.2 + R.MISS_GRACE + 0.01)
     assert [r.grade for r in out] == [R.MISS]
     assert j.combo == 0
 
 
 def test_judge_assigns_nearest_when_windows_overlap():
-    # 사진관의 '두 명 연달아'는 노트 간격이 1박(536ms)이라 창이 가깝다. 가까운 쪽에 배정되어야 한다
+    # "Back to back" in Blink Studio has notes 1 beat (536 ms) apart; a blink goes to the nearer note
     j, notes = make_judge(key="photo")
     pair = [(a, b) for a, b in zip(notes, notes[1:]) if b.beat - a.beat == 1][0]
     a, b = pair
@@ -154,11 +154,11 @@ def test_judge_assigns_nearest_when_windows_overlap():
 
 
 def simulate(key, lag=0.130, sigma=0.045, seed=7, fps=30):
-    """웹캠 프레임 + 장치 지연 + 사람 편차로 한 판 시뮬레이션."""
+    """Simulate one game with webcam frames, device delay and human spread."""
     rnd = random.Random(seed)
     st = S.make_stage(key)
     j = R.Judge(st.notes, 0.0, st.beat_sec, offset=lag)
-    human = [n.time + 0.03 + rnd.gauss(0, sigma) for n in st.notes]   # 박보다 평균 30ms 늦게 시작
+    human = [n.time + 0.03 + rnd.gauss(0, sigma) for n in st.notes]   # on average 30 ms after the beat
     series = synth_ear(human, fps, st.seconds + 1)
     closes, _ = run_detector(series, cam_lag=lag)
     for o in closes:
@@ -183,7 +183,7 @@ def test_stage_charts():
         assert 25 < st.seconds < 45, (key, st.seconds)
         beats = [n.beat for n in st.notes]
         assert beats == sorted(beats) and [n.idx for n in st.notes] == list(range(len(beats)))
-        # 노트 사이가 판정 창 두 개(±200ms)보다 넉넉해야 한 깜빡임이 엉뚱한 노트에 붙지 않는다
+        # notes must be further apart than two windows (+/-200 ms) so a blink never lands on the wrong note
         gaps = [(b - a) * st.beat_sec for a, b in zip(beats, beats[1:])]
         assert min(gaps) >= 0.5, (key, min(gaps))
         assert beats[0] >= S.COUNT_IN and beats[-1] < st.length
@@ -230,7 +230,7 @@ def test_render_stage_track():
         buf = A.render_stage(st, bank)
         assert len(buf) >= st.seconds * A.SR
         assert abs(buf).max() <= 0.951
-        # 첫 신호음 자리에는 소리가 있어야 한다
+        # there must be sound where the first cue plays
         c = st.cues[0]
         i = int(c.beat * st.beat_sec * A.SR)
         assert abs(buf[i:i + 2000]).max() > 0.1
@@ -242,11 +242,11 @@ def test_feedback_and_combine():
     m = R.combine([a, b])
     assert m["total"] == a["total"] + b["total"]
     assert len(m["sections"]) == 2
-    lines = R.feedback(m, ["등대 신호", "올빼미 합창"])
+    lines = R.feedback(m, ["Lighthouse", "Owl Choir"])
     assert 1 <= len(lines) <= 3
     empty = R.make_summary({g: (5 if g == R.MISS else 0) for g in R.GRADES}, 5, [], 0, 0, [0.0, 0.0])
-    assert "얼굴" in R.feedback(empty, ["가", "나"])[0]
-    assert R.rank_of(90) == "최고예요" and R.rank_level(10) == 3
+    assert "face" in R.feedback(empty, ["A", "B"])[0]
+    assert R.rank_of(90) == "Superb" and R.rank_level(10) == 3
 
 
 def test_next_stage_rotation():
@@ -258,15 +258,15 @@ def test_next_stage_rotation():
 def test_calibration_offset():
     rnd = random.Random(3)
     t0 = 50.0
-    true_lag = 0.21                    # 사람 반응 + 장치 지연
+    true_lag = 0.21                    # human reaction + device delay
     beats = [t0 + k * R.CAL_BEAT for k in range(R.CAL_TICKS)]
     onsets = [b + true_lag + rnd.gauss(0, 0.04) for b in beats[R.CAL_SKIP:]]
     off, sd, n = R.compute_offset(onsets, t0)
     assert abs(off - true_lag) < 0.03 and n >= 6
-    # 엉망으로 깜빡이면 실패 처리
+    # erratic blinking fails
     bad = [t0 + 3 + rnd.random() * 5 for _ in range(8)]
     assert R.compute_offset(bad, t0) is None
-    # 너무 적으면 실패
+    # too few blinks fails
     assert R.compute_offset(onsets[:3], t0) is None
 
 
@@ -282,7 +282,7 @@ def test_suggest_shift():
     assert R.suggest_offset_shift(j2.summary()) is None
 
 
-# --------------------------------------------------------------------- 게임 창(화면 없이 그려 보기)
+# --------------------------------------------------------------------- game window (drawn without a display)
 def _headless_game():
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -317,7 +317,7 @@ def _frames(g, n=3, dt=0.02):
 def test_window_scale_fits_desktop():
     from blinkythm.game import gfx as G
     assert G.initial_window_size(1920, 1080) == (1536, 864)
-    assert G.initial_window_size(3840, 2160) == (3072, 1728)       # 4K: 8배
+    assert G.initial_window_size(3840, 2160) == (3072, 1728)       # 4K: 8x
     assert G.initial_window_size(1366, 768) == (768, 432)
     assert G.fit_scale(1000, 600) == 2 and G.fit_scale(100, 100) == 1
 
@@ -337,12 +337,12 @@ def test_game_screens_render_and_flow():
         _frames(g, 12)
         assert isinstance(g.screen, SC.PlayScreen) and g.screen.stage.key == S.ORDER[1]
         ps = g.screen
-        # 첫 노트에 맞춰 깜빡인 것으로 처리
+        # treat it as a blink on the first note
         n = ps.stage.notes[0]
         ps.blink(n.time + 0.01)
         assert ps.judge.matched[0].grade == R.PERFECT
         _frames(g, 2)
-        # 곡 끝을 건너뛰어 결과로
+        # skip to the end of the track to reach the result
         ps.t0 -= ps.stage.seconds + 1
         _frames(g, 14)
         assert isinstance(g.screen, SC.ResultScreen)
@@ -365,7 +365,7 @@ def test_medley_and_double_blink():
     fake, g = _headless_game()
     try:
         _frames(g)
-        # 홈에서 눈을 두 번 깜빡이면 추천 게임 시작
+        # a double blink on the home screen starts the suggested game
         g._on_blink(10.0)
         g._on_blink(10.3)
         _frames(g, 14)
@@ -392,7 +392,7 @@ def test_medley_and_double_blink():
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):          # Windows 콘솔(cp1252)에서도 한글 출력이 깨지지 않게
+    if hasattr(sys.stdout, "reconfigure"):          # avoid encoding errors on the Windows console (cp1252)
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     fails = 0
     for k, v in list(globals().items()):

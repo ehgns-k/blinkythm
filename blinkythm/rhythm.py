@@ -1,37 +1,37 @@
-"""판정, 평가, 타이밍 보정 계산(순수 로직). 채보는 stages.py에 있다."""
+"""Judging, scoring and latency calibration (pure logic). Charts live in stages.py."""
 import statistics
 from dataclasses import dataclass
 from typing import Optional
 
-# 판정 등급
+# Grades
 PERFECT, GOOD, OK, MISS = "perfect", "good", "ok", "miss"
 GRADES = (PERFECT, GOOD, OK, MISS)
 POINTS = {PERFECT: 100, GOOD: 75, OK: 40, MISS: 0}
-LABEL = {PERFECT: "완벽", GOOD: "좋음", OK: "아쉬움", MISS: "놓침"}
+LABEL = {PERFECT: "Perfect", GOOD: "Good", OK: "Close", MISS: "Miss"}
 
-# 판정 창(초, 노트 기준 ±).
-# 웹캠은 30fps면 프레임 간격이 33ms이고, 눈 감기 시작을 자발적으로 맞추는 사람의 편차도 크므로
-# 키보드 리듬게임보다 훨씬 넓게 잡는다. 느린 카메라는 slack으로 추가 보정한다.
+# Judgement windows (seconds, +/- around the note).
+# A 30 fps webcam has 33 ms between frames, and people vary a lot when timing a blink on purpose,
+# so the windows are much wider than in a keyboard rhythm game. Slow cameras get extra slack.
 WINDOWS = {PERFECT: 0.070, GOOD: 0.130, OK: 0.200}
-# 입력 이벤트는 감기 시작 후 몇 프레임이 지나서 도착하므로, 이 시간이 지나야 "놓침"으로 확정한다.
+# Blink events arrive a few frames after the eye starts closing, so a miss is only final after this delay.
 MISS_GRACE = 0.18
 
 
 @dataclass
 class Cue:
-    """박자를 알려 주는 소리/동작. 플레이어는 이것을 보고 들은 뒤 Note 시각에 깜빡인다."""
-    beat: float            # 곡 시작 기준 박 위치
-    sound: str             # assets/sounds의 파일 이름(확장자 제외)
-    actor: str             # 장면에서 움직일 대상
-    time: float = 0.0      # 절대 시각(perf_counter)
+    """A sound or motion that sets the beat. The player sees or hears it, then blinks at the Note time."""
+    beat: float            # position in beats from the start of the track
+    sound: str             # file name in assets/sounds, without extension
+    actor: str             # what moves in the scene
+    time: float = 0.0      # absolute time (perf_counter)
 
 
 @dataclass
 class Note:
     idx: int
-    beat: float            # 곡 시작 기준 박 위치
-    section: int = 0       # 평가용 구간 번호
-    reveal: float = 0.0    # 이 박이 지나야 가이드에 위치를 보여 준다(신호를 듣기 전에는 숨김)
+    beat: float            # position in beats from the start of the track
+    section: int = 0       # section index used for feedback
+    reveal: float = 0.0    # beat after which the guide shows this note (hidden until its cue plays)
     actor: str = ""
     time: float = 0.0
 
@@ -40,11 +40,11 @@ class Note:
 class Result:
     note: Note
     grade: str
-    dt: Optional[float]    # 입력 - 노트, 초. 양수 = 늦음. 놓침이면 None
+    dt: Optional[float]    # input minus note, seconds. Positive = late. None for a miss
 
 
 def frame_slack(frame_dt):
-    """카메라가 30fps보다 느릴 때 판정 창에 더해 줄 여유(초)."""
+    """Extra window (seconds) for cameras slower than 30 fps."""
     return max(0.0, frame_dt - 1 / 30) * 0.5
 
 
@@ -56,9 +56,9 @@ class Judge:
         self.offset = offset
         self.slack = slack
         self.win = {k: v + slack for k, v in WINDOWS.items()}
-        self.matched = [None] * len(self.notes)    # Result 또는 None
+        self.matched = [None] * len(self.notes)    # Result or None
         self.results = []
-        self.stray = []                            # 어떤 노트와도 맞지 않은 깜빡임 시각
+        self.stray = []                            # blink times that matched no note
         self.combo = 0
         self.best_combo = 0
 
@@ -78,7 +78,7 @@ class Judge:
             self.best_combo = max(self.best_combo, self.combo)
 
     def on_blink(self, onset):
-        """감기 시작 시각(카메라 시계)을 받아 판정. 맞는 노트가 없으면 None."""
+        """Judge a blink from its onset time (camera clock). Returns None if no note matches."""
         t = onset - self.offset
         best, best_abs = None, None
         for i, n in enumerate(self.notes):
@@ -98,7 +98,7 @@ class Judge:
         return res
 
     def poll(self, now):
-        """아무 입력도 받지 못하고 지나간 노트를 놓침으로 확정."""
+        """Mark notes that passed without any input as misses."""
         out = []
         for i, n in enumerate(self.notes):
             if self.matched[i] is None and now > n.time + self.win[OK] + MISS_GRACE:
@@ -118,7 +118,7 @@ class Judge:
             return None
         return sum(POINTS[r.grade] for r in done) / (100.0 * len(done)) * 100
 
-    # --- 결과 요약 -----------------------------------------------------------
+    # --- summary -------------------------------------------------------------
     def summary(self, n_sections=1):
         done = [m for m in self.matched if m is not None]
         counts = {g: sum(1 for r in done if r.grade == g) for g in GRADES}
@@ -151,7 +151,7 @@ def make_summary(counts, total, dts, stray, best_combo, sections=()):
 
 
 def combine(summaries):
-    """메들리: 여러 게임의 요약을 하나로 합친다(구간 대신 게임별 정확도)."""
+    """Medley: merge several summaries (per-game accuracy instead of sections)."""
     counts = {g: sum(s["counts"][g] for s in summaries) for g in GRADES}
     total = sum(s["total"] for s in summaries)
     dts = [d for s in summaries for d in s["dts"]]
@@ -161,8 +161,8 @@ def combine(summaries):
     return out
 
 
-# 등급(도장) 이름과 기준. 낮은 등급도 꾸짖지 않는 말로 쓴다.
-RANKS = [(85, "최고예요"), (65, "잘했어요"), (40, "좋아요"), (0, "푹 쉬었어요")]
+# Stamp names and thresholds. Even the lowest one is not a scolding.
+RANKS = [(85, "Superb"), (65, "Nice"), (40, "Good"), (0, "Rested")]
 
 
 def rank_of(acc):
@@ -173,7 +173,7 @@ def rank_of(acc):
 
 
 def rank_level(acc):
-    """0(최고)~3. 결과 음악을 고를 때 쓴다."""
+    """0 (best) to 3. Picks the result jingle."""
     for i, (lo, _) in enumerate(RANKS):
         if acc >= lo:
             return i
@@ -181,30 +181,30 @@ def rank_level(acc):
 
 
 def feedback(summary, names):
-    """구간별 정확도를 보고 한두 줄 평을 만든다. names: 구간(또는 게임) 이름."""
+    """One or two lines of feedback from section accuracy. names: section (or game) names."""
     secs = [(a, n) for a, n in zip(summary["sections"], names) if a is not None]
     if summary["total"] and summary["counts"][MISS] == summary["total"]:
-        return ["깜빡임이 거의 잡히지 않았습니다. 얼굴 위치와 조명을 확인해 보세요."]
+        return ["Hardly any blinks were detected. Check your face position and lighting."]
     lines = []
     if summary["no_miss"]:
-        lines.append("한 번도 놓치지 않았어요.")
+        lines.append("No misses at all.")
     if len(secs) >= 2:
         best = max(secs)
         worst = min(secs)
         if best[0] - worst[0] >= 15:
             if best[0] >= 65:
-                lines.append("'%s' 부분이 특히 좋았어요." % best[1])
-            lines.append("'%s' 부분을 조금 더 연습해 보세요." % worst[1])
+                lines.append("\"%s\" went especially well." % best[1])
+            lines.append("Try \"%s\" a few more times." % worst[1])
         elif summary["accuracy"] >= 65:
-            lines.append("처음부터 끝까지 고르게 잘 맞혔어요.")
+            lines.append("Even timing from start to finish.")
     m = summary["mean_dt"]
     if m is not None and abs(m) >= 0.06:
-        lines.append("전체적으로 박자보다 %s 편이에요." % ("늦은" if m > 0 else "빠른"))
-    return lines[:3] or ["박자를 미리 세면서 신호를 기다려 보세요."]
+        lines.append("Overall you blinked a little %s." % ("late" if m > 0 else "early"))
+    return lines[:3] or ["Count the beats in your head while you wait for the cue."]
 
 
 def suggest_offset_shift(summary, min_hits=10, min_shift=0.030):
-    """평균 오차가 한쪽으로 치우쳐 있으면 보정값 조정량(초)을 제안. 없으면 None."""
+    """Suggest a calibration change (seconds) if the timing leans to one side, else None."""
     dts = summary["dts"]
     if len(dts) < min_hits or summary["mean_dt"] is None:
         return None
@@ -212,18 +212,18 @@ def suggest_offset_shift(summary, min_hits=10, min_shift=0.030):
     return med if abs(med) >= min_shift else None
 
 
-# --- 보정 -------------------------------------------------------------------
+# --- calibration -------------------------------------------------------------
 CAL_BPM = 90.0
 CAL_BEAT = 60.0 / CAL_BPM
 CAL_TICKS = 12
-CAL_SKIP = 4                 # 앞 4박은 따라 하기 준비
+CAL_SKIP = 4                 # the first 4 ticks are for listening
 
 
 def compute_offset(onsets, t0):
-    """보정용 메트로놈에 맞춰 깜빡인 시각들로 입력 지연을 추정.
+    """Estimate input delay from blinks timed to the calibration metronome.
 
-    사람은 소리에 '반응'하므로 보통 박보다 늦게 입력된다. 박 주기로 접어(mod) 중앙값을 구한다.
-    반환: (offset초, 표준편차, 사용한 개수) 또는 None.
+    People react to sound, so input usually lands after the beat. Fold by the beat period and take the median.
+    Returns (offset seconds, standard deviation, samples used) or None.
     """
     lo = -0.20
     ds = []

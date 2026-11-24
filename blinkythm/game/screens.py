@@ -1,4 +1,4 @@
-"""게임 창의 화면들: 홈, 게임 고르기, 플레이, 쉬는 시간(메들리), 결과, 먼 곳 보기."""
+"""Game window screens: home, game select, play, medley break, result, look-far-away rest."""
 import math
 import time
 
@@ -18,7 +18,7 @@ JINGLES = ["jingle_great", "jingle_good", "jingle_try", "jingle_try"]
 
 def fmt_minutes(sec):
     m = int(sec // 60)
-    return "%d시간 %02d분" % (m // 60, m % 60) if m >= 60 else "%d분" % m
+    return "%dh %02dm" % (m // 60, m % 60) if m >= 60 else "%d min" % m
 
 
 class Screen:
@@ -32,7 +32,7 @@ class Screen:
         self.focus = 0
         self.t_enter = time.perf_counter()
 
-    # 수명
+    # lifecycle
     def enter(self):
         self.t_enter = time.perf_counter()
 
@@ -42,7 +42,7 @@ class Screen:
     def update(self, now):
         pass
 
-    # 입력
+    # input
     def key(self, k):
         if not self.buttons:
             return False
@@ -83,7 +83,7 @@ class Screen:
             self.ctx.sound("ui_ok")
             self.buttons[0].action()
 
-    # 그리기
+    # drawing
     def draw(self, s, now):
         raise NotImplementedError
 
@@ -94,9 +94,9 @@ class Screen:
         x = G.BASE_W - 6
         tr = self.ctx.tracker
         if tr.error:
-            r = self.g.text(s, "카메라 오류", (x, 3), G.ROSE, "small", "topright")
+            r = self.g.text(s, "Camera error", (x, 3), G.ROSE, "small", "topright")
         elif not tr.face_visible:
-            r = self.g.text(s, "얼굴이 안 보여요", (x, 3), G.PEACH, "small", "topright")
+            r = self.g.text(s, "Face not visible", (x, 3), G.PEACH, "small", "topright")
         else:
             G.eye_icon(s, (x - 6, 8), tr.eye_closed, G.CREAM)
             r = pygame.Rect(x - 12, 3, 12, 10)
@@ -113,7 +113,7 @@ class Screen:
             b.draw(self.g, s, r, i == self.focus)
 
 
-# ====================================================================== 홈
+# ====================================================================== home
 class HomeScreen(Screen):
     accepts_double_blink = True
     STARS = G.stars(5, (0, 0, G.BASE_W, 120), 60)
@@ -124,10 +124,10 @@ class HomeScreen(Screen):
         self.pick = ctx.recommended()
         self.pick_title = S.make_stage(self.pick).title
         self.buttons = [
-            G.Button("시작", "Enter", lambda: ctx.start([self.pick]), primary=True),
-            G.Button("게임 고르기", "G", lambda: ctx.go(SelectScreen(ctx))),
-            G.Button("설정", "S", ctx.open_settings),
-            G.Button("닫기", "Esc", ctx.close),
+            G.Button("Play", "Enter", lambda: ctx.start([self.pick]), primary=True),
+            G.Button("Games", "G", lambda: ctx.go(SelectScreen(ctx))),
+            G.Button("Settings", "S", ctx.open_settings),
+            G.Button("Close", "Esc", ctx.close),
         ]
 
     def key(self, k):
@@ -147,51 +147,51 @@ class HomeScreen(Screen):
         G.draw_stars(s, self.STARS, now)
         pygame.draw.circle(s, (240, 230, 176), (352, 30), 9)
         pygame.draw.circle(s, (34, 30, 68), (356, 27), 8)
-        # 언덕과 마을
+        # hills and village
         pts = [(0, 140)] + [(x, 132 - int(10 * math.sin(x / 40.0))) for x in range(0, G.BASE_W + 1, 8)] + [(G.BASE_W, 140)]
         pygame.draw.polygon(s, (48, 44, 92), pts + [(G.BASE_W, 216), (0, 216)])
         for i, (x, w, h) in enumerate(self.HOUSES):
             base = 136 - int(10 * math.sin(x / 40.0))
             pygame.draw.rect(s, (30, 27, 58), (x, base - h, w, h))
             pygame.draw.polygon(s, (30, 27, 58), [(x - 2, base - h), (x + w // 2, base - h - 7), (x + w + 2, base - h)])
-            lit = math.sin(now * 0.7 + i * 1.9) > -0.6       # 창문이 가끔 깜빡인다
+            lit = math.sin(now * 0.7 + i * 1.9) > -0.6       # windows blink now and then
             pygame.draw.rect(s, G.LAMP if lit else (60, 54, 96), (x + w // 2 - 2, base - h + 5, 4, 4))
         pygame.draw.rect(s, (40, 36, 80), (0, 150, G.BASE_W, 66))
         pygame.draw.line(s, (56, 52, 104), (0, 150), (G.BASE_W, 150))
-        # 제목
+        # title
         bob = round(math.sin(t * 2) * 1)
         self.g.text(s, "Blinkythm", (14, 12 + bob), G.LAMP, "bold", shadow=(150, 96, 40), scale=3)
-        self.g.text(s, "눈을 깜빡여 박자를 맞추는 작은 리듬 게임", (16, 62), G.FOG, "small")
-        # 마스코트: 내 눈을 따라 깜빡이고, 가끔 혼자 깜빡인다
+        self.g.text(s, "A small rhythm game you play by blinking", (16, 62), G.FOG, "small")
+        # mascot: copies your blinks and sometimes blinks on its own
         closed = self.ctx.tracker.eye_closed or (t % 3.4) < 0.14
         pygame.draw.rect(s, G.WOOD, (52, 146, 40, 6))
         pygame.draw.rect(s, (96, 62, 38), (58, 152, 4, 30))
         pygame.draw.rect(s, (96, 62, 38), (82, 152, 4, 30))
         self.g.blit_sprite(s, "owl_me_closed" if closed else "owl_me_open", (72, 147), scale=4)
-        # 오늘의 눈
-        box = G.panel(s, (196, 74, 176, 102), (30, 27, 58), G.DUSK, light=(48, 44, 92))
-        self.g.text(s, "오늘의 눈", (box.left + 8, box.top + 5), G.CREAM, "bold")
+        # today's eyes
+        box = G.panel(s, (196, 74, 176, 105), (30, 27, 58), G.DUSK, light=(48, 44, 92))
+        self.g.text(s, "Your eyes today", (box.left + 8, box.top + 5), G.CREAM, "bold")
         mon, st = self.ctx.monitor, self.ctx.settings
         now_p = time.perf_counter()
         rate = mon.blink_rate(now_p)
         y = box.top + 25
-        self.g.text(s, "화면 본 시간", (box.left + 8, y), G.FOG, "small")
+        self.g.text(s, "Screen time", (box.left + 8, y), G.FOG, "small")
         self.g.text(s, fmt_minutes(mon.screen_seconds(now_p)), (box.right - 8, y), G.CREAM, "small", "topright")
         y += 15
-        self.g.text(s, "분당 깜빡임", (box.left + 8, y), G.FOG, "small")
+        self.g.text(s, "Blinks / min", (box.left + 8, y), G.FOG, "small")
         if rate is None:
-            self.g.text(s, "재는 중", (box.right - 8, y), G.HAZE, "small", "topright")
+            self.g.text(s, "measuring", (box.right - 8, y), G.HAZE, "small", "topright")
         else:
             col = G.MINT if rate >= st.blink_threshold else G.PEACH
-            self.g.text(s, "%d회" % round(rate), (box.right - 8, y), col, "small", "topright")
+            self.g.text(s, "%d" % round(rate), (box.right - 8, y), col, "small", "topright")
             bx = pygame.Rect(box.left + 70, y + 4, 64, 4)
             G.bar(s, bx, rate / 30.0, col)
             tx = bx.left + round(bx.width * st.blink_threshold / 30.0)
             pygame.draw.line(s, G.CREAM, (tx, bx.top - 2), (tx, bx.bottom + 1))
         y += 15
         daily = self.ctx.daily()
-        self.g.text(s, "오늘 쉰 횟수", (box.left + 8, y), G.FOG, "small")
-        self.g.text(s, "%d번" % daily["rests"], (box.right - 8, y), G.CREAM, "small", "topright")
+        self.g.text(s, "Rests today", (box.left + 8, y), G.FOG, "small")
+        self.g.text(s, "%d" % daily["rests"], (box.right - 8, y), G.CREAM, "small", "topright")
         y += 18
         stamps = self.ctx.settings.stamps
         filled = stamps % STAMP_SLOTS if stamps % STAMP_SLOTS or not stamps else STAMP_SLOTS
@@ -204,15 +204,15 @@ class HomeScreen(Screen):
                 pygame.draw.circle(s, G.DUSK, (cx, y + 6), 6, 1)
         cards = stamps // STAMP_SLOTS
         y += 16
-        self.g.text(s, "오늘의 게임", (box.left + 8, y), G.FOG, "small")
+        self.g.text(s, "Today's game", (box.left + 8, y), G.FOG, "small")
         self.g.text(s, self.pick_title, (box.right - 8, y), G.LAMP, "small", "topright")
         if cards:
-            self.g.text(s, "도장판 %d장 채움" % cards, (box.right - 8, box.top + 6), G.HAZE, "small", "topright")
-        self.g.text(s, "눈을 두 번 깜빡여도 시작해요", (G.BASE_W - 8, 181), G.HAZE, "small", "topright")
+            self.g.text(s, "%d full cards" % cards, (box.right - 8, box.top + 6), G.HAZE, "small", "topright")
+        self.g.text(s, "Or blink twice to start", (G.BASE_W - 8, 182), G.HAZE, "small", "topright")
         self.button_row(s)
 
 
-# ====================================================================== 게임 고르기
+# ====================================================================== game select
 class SelectScreen(Screen):
     accepts_double_blink = True
     TILE_BG = {"lighthouse": ((16, 28, 64), (20, 56, 104)), "owls": ((30, 24, 64), (36, 34, 78)),
@@ -226,9 +226,9 @@ class SelectScreen(Screen):
         self.sel = S.ORDER.index(pick) if pick in S.ORDER else 0
         self.tiles = []
         self.buttons = [
-            G.Button("시작", "Enter", self._start, primary=True),
-            G.Button("메들리", "M", lambda: ctx.start(list(S.ORDER))),
-            G.Button("뒤로", "Esc", lambda: ctx.go(HomeScreen(ctx))),
+            G.Button("Play", "Enter", self._start, primary=True),
+            G.Button("Medley", "M", lambda: ctx.start(list(S.ORDER))),
+            G.Button("Back", "Esc", lambda: ctx.go(HomeScreen(ctx))),
         ]
 
     def _start(self):
@@ -269,7 +269,7 @@ class SelectScreen(Screen):
 
     def draw(self, s, now):
         s.fill((34, 30, 68))
-        self.topbar(s, "게임 고르기")
+        self.topbar(s, "Choose a game")
         rec = self.ctx.settings.records or {}
         self.tiles = []
         t = now - self.t_enter
@@ -289,10 +289,10 @@ class SelectScreen(Screen):
             hop = round(abs(math.sin(t * 3)) * 2) if focused else 0
             self.g.blit_sprite(s, self.HERO[st.key], (art.centerx, art.bottom - 3 - hop))
             self.g.text(s, st.title, (r.left + 8, art.bottom + 5), G.CREAM, "bold")
-            self.g.text(s, "%s · %d초" % (st.style, round(st.seconds)), (r.left + 8, art.bottom + 22), G.FOG, "small")
+            self.g.text(s, "%s · %ds" % (st.style, round(st.seconds)), (r.left + 8, art.bottom + 22), G.FOG, "small")
             best = rec.get(st.key)
             if best is not None:
-                self.g.text(s, "최고 %d%%" % round(best), (r.right - 7, art.bottom + 22), G.LAMP, "small", "topright")
+                self.g.text(s, "Best %d%%" % round(best), (r.right - 7, art.bottom + 22), G.LAMP, "small", "topright")
         st = self.stages[self.sel]
         y = 146
         for line in st.howto[:2]:
@@ -304,9 +304,9 @@ class SelectScreen(Screen):
         self.button_row(s)
 
 
-# ====================================================================== 플레이
+# ====================================================================== play
 class PlayScreen(Screen):
-    title = "플레이"
+    title = "Play"
 
     def __init__(self, ctx, key, queue, played):
         super().__init__(ctx)
@@ -363,7 +363,7 @@ class PlayScreen(Screen):
             self.popup = (R.LABEL[R.MISS], "", now)
         else:
             ms = int(round(res.dt * 1000))
-            sub = "딱 맞아요" if abs(ms) <= 25 else ("%dms 늦게" % ms if ms > 0 else "%dms 일찍" % -ms)
+            sub = "Spot on" if abs(ms) <= 25 else ("%d ms late" % ms if ms > 0 else "%d ms early" % -ms)
             self.popup = (R.LABEL[res.grade], sub, now)
 
     def update(self, now):
@@ -387,17 +387,17 @@ class PlayScreen(Screen):
         beat = (now - self.t0) / st.beat_sec
         view = View(now, beat, self.ctx.tracker.eye_closed, self.hits)
         self.scene.draw(s, view)
-        # 머리줄
+        # header
         if beat < S.COUNT_IN:
-            sub = "준비"
+            sub = "Get ready"
         elif beat >= st.length:
-            sub = "끝"
+            sub = "Done"
         else:
             sub = self.scene.phase_text(beat) or st.section_at(beat)
         done = sum(1 for m in self.judge.matched if m is not None)
         self.topbar(s, st.title, "%d / %d" % (done, len(st.notes)), beat)
         self.g.text(s, sub, (self.g.width(st.title, "bold") + 16, 3), G.FOG, "small")
-        # 세기
+        # count-in
         if 0 <= beat < S.COUNT_IN:
             n = S.COUNT_IN - int(beat)
             k = G.ease_out_back((beat % 1.0) * 3)
@@ -408,7 +408,7 @@ class PlayScreen(Screen):
             if k >= 1:
                 s.blit(sh, r.move(0, 3))
             s.blit(img, r)
-        # 판정 말풍선
+        # grade popup
         if self.popup and now - self.popup[2] < 0.7:
             text, sub, t = self.popup
             grade = next((g for g, lb in R.LABEL.items() if lb == text), R.MISS)
@@ -434,7 +434,7 @@ class PlayScreen(Screen):
                 x = G.BASE_W // 2 - 27 + i * 18
                 on = beat >= i
                 pygame.draw.rect(s, G.LAMP if on else G.DUSK, (x - 4, 187, 8, 8))
-            self.g.text(s, "소리를 들으며 박자를 세어 보세요", (G.BASE_W // 2, 199), G.FOG, "small", "midtop")
+            self.g.text(s, "Listen and count along", (G.BASE_W // 2, 199), G.FOG, "small", "midtop")
             return
         page = max(0, int((beat - S.COUNT_IN) // S.PAGE_BEATS))
         base = S.COUNT_IN + S.PAGE_BEATS * page
@@ -452,8 +452,8 @@ class PlayScreen(Screen):
         for k in range(S.PAGE_BEATS + 1):
             x = round(LANE_X0 + k * px)
             pygame.draw.line(s, G.HAZE if k % 4 == 0 else G.DUSK, (x, LANE_Y0), (x, LANE_Y1 - 1))
-        self.g.text(s, "신호", (LANE_X0 - 6, (LANE_Y0 + mid) // 2), G.HAZE, "small", "midright")
-        self.g.text(s, "나", (LANE_X0 - 6, (mid + LANE_Y1) // 2), G.LAMP, "small", "midright")
+        self.g.text(s, "Cue", (LANE_X0 - 6, (LANE_Y0 + mid) // 2), G.HAZE, "small", "midright")
+        self.g.text(s, "You", (LANE_X0 - 6, (mid + LANE_Y1) // 2), G.LAMP, "small", "midright")
         cy = (LANE_Y0 + mid) // 2
         for q in st.cues:
             if on_page(q.beat) and now >= q.time:
@@ -481,7 +481,7 @@ class PlayScreen(Screen):
         pygame.draw.rect(s, G.CREAM, (x - 1, LANE_Y0 - 3, 3, 2))
 
 
-# ====================================================================== 메들리 쉬는 시간
+# ====================================================================== medley break
 class InterludeScreen(Screen):
     def __init__(self, ctx, queue, played):
         super().__init__(ctx)
@@ -508,11 +508,11 @@ class InterludeScreen(Screen):
     def draw(self, s, now):
         s.fill((34, 30, 68))
         total = len(self.played) + len(self.queue)
-        self.topbar(s, "메들리 %d / %d" % (len(self.played), total))
+        self.topbar(s, "Medley %d / %d" % (len(self.played), total))
         stage, sm = self.played[-1]
         self.g.text(s, "%s  %d%%" % (stage.title, round(sm["accuracy"])), (G.BASE_W // 2, 40), G.FOG, "body", "midtop")
         self.g.text(s, R.rank_of(sm["accuracy"]), (G.BASE_W // 2, 58), G.ROSE, "bold", "midtop")
-        self.g.text(s, "다음", (G.BASE_W // 2, 92), G.HAZE, "small", "midtop")
+        self.g.text(s, "Next", (G.BASE_W // 2, 92), G.HAZE, "small", "midtop")
         self.g.text(s, self.next.title, (G.BASE_W // 2, 104), G.LAMP, "bold", "midtop", shadow=(150, 96, 40), scale=3)
         y = 154
         for part in self.g.wrap(self.next.howto[1], 340, "small"):
@@ -522,7 +522,7 @@ class InterludeScreen(Screen):
         G.bar(s, (92, 196, 200, 3), 1 - left / INTERLUDE, G.LAMP)
 
 
-# ====================================================================== 결과
+# ====================================================================== result
 class ResultScreen(Screen):
     accepts_double_blink = True
 
@@ -532,7 +532,7 @@ class ResultScreen(Screen):
         self.medley = len(played) > 1
         if self.medley:
             self.sm = R.combine([x[1] for x in played])
-            self.key_name, self.names, self.name = S.MEDLEY, [x[0].title for x in played], "메들리"
+            self.key_name, self.names, self.name = S.MEDLEY, [x[0].title for x in played], "Medley"
         else:
             st, self.sm = played[0]
             self.key_name, self.names, self.name = st.key, st.sections, st.title
@@ -542,9 +542,9 @@ class ResultScreen(Screen):
         self.shift_msg = None
         replay = [x[0].key for x in played]
         self.buttons = [
-            G.Button("눈 쉬러 가기", "Enter", lambda: ctx.go(RestScreen(ctx)), primary=True),
-            G.Button("다시", "R", lambda: ctx.start(list(replay))),
-            G.Button("고르기", "G", lambda: ctx.go(SelectScreen(ctx))),
+            G.Button("Rest your eyes", "Enter", lambda: ctx.go(RestScreen(ctx)), primary=True),
+            G.Button("Again", "R", lambda: ctx.start(list(replay))),
+            G.Button("Games", "G", lambda: ctx.go(SelectScreen(ctx))),
         ]
         self.stamped = False
 
@@ -571,30 +571,30 @@ class ResultScreen(Screen):
     def draw(self, s, now):
         sm = self.sm
         s.fill((34, 30, 68))
-        self.topbar(s, "%s 결과" % self.name)
+        self.topbar(s, "%s results" % self.name)
         t = now - self.t_enter
-        # 왼쪽: 도장, 정확도, 판정 수
+        # left: stamp, accuracy, grade counts
         left = G.panel(s, (8, 22, 136, 166), (30, 27, 58), G.DUSK, light=(48, 44, 92))
         cx, cy = left.centerx, 68
         if t > 0.45:
             k = G.ease_out_back((t - 0.45) / 0.25)
-            r = max(1, round(36 * (1.6 - 0.6 * k)))
+            r = max(1, round(32 * (1.6 - 0.6 * k)))
             pygame.draw.circle(s, G.ROSE, (cx, cy), r, 2)
             pygame.draw.circle(s, G.ROSE, (cx, cy), max(1, r - 4), 1)
             if k >= 0.9:
                 self.g.text(s, sm["rank"], (cx, cy), G.ROSE, "bold", "center")
         if self.new_best and t > 0.9:
-            self.g.text(s, "새 기록", (left.right - 6, left.top + 4), G.LAMP, "small", "topright")
+            self.g.text(s, "New best", (left.right - 6, left.top + 4), G.LAMP, "small", "topright")
         self.g.text(s, "%d%%" % round(sm["accuracy"]), (cx, 106), G.CREAM, "bold", "midtop", shadow=G.INK, scale=3)
         y = 158
         for i, g in enumerate(R.GRADES):
-            x = left.left + 10 + (i % 2) * 64
+            x = left.left + 8 + (i % 2) * 70
             yy = y + (i // 2) * 14
             pygame.draw.rect(s, G.GRADE_COLOR[g], (x, yy + 4, 5, 5))
             self.g.text(s, "%s %d" % (R.LABEL[g], sm["counts"][g]), (x + 9, yy), G.CREAM, "small")
-        # 오른쪽: 구간, 한 줄 평, 타이밍
+        # right: sections, feedback, timing
         right = G.panel(s, (150, 22, 226, 166), (30, 27, 58), G.DUSK, light=(48, 44, 92))
-        self.g.text(s, "게임별" if self.medley else "구간별", (right.left + 8, right.top + 5), G.FOG, "small")
+        self.g.text(s, "By game" if self.medley else "By section", (right.left + 8, right.top + 5), G.FOG, "small")
         y = right.top + 20
         for name, acc in zip(self.names, sm["sections"]):
             self.g.text(s, name, (right.left + 8, y), G.CREAM, "small")
@@ -608,22 +608,22 @@ class ResultScreen(Screen):
             for part in self.g.wrap(line, right.width - 16, "small")[:2]:
                 self.g.text(s, part, (right.left + 8, y), G.LAMP, "small")
                 y += 12
-        # 타이밍 분포
+        # timing spread
         hy = right.bottom - 40
         self._hist(s, pygame.Rect(right.left + 8, hy, 96, 24), sm["dts"])
         if sm["mean_dt"] is None:
-            msg = "깜빡임이 잡히지 않았어요"
+            msg = "No blinks were detected"
         else:
             ms = sm["mean_dt"] * 1000
-            msg = "평균 %d ms %s" % (abs(round(ms)), "늦게" if ms > 0 else "일찍")
+            msg = "Average %d ms %s" % (abs(round(ms)), "late" if ms > 0 else "early")
         self.g.text(s, msg, (right.left + 112, hy), G.CREAM, "small")
         if self.shift is not None:
             keycap(self.g, s, "A", (right.left + 112, hy + 19))
-            self.g.text(s, "보정에 반영", (right.left + 126, hy + 14), G.FOG, "small")
+            self.g.text(s, "Apply to offset", (right.left + 126, hy + 14), G.FOG, "small")
         elif self.shift_msg:
             self.g.text(s, self.shift_msg, (right.left + 112, hy + 14), G.MINT, "small")
         elif sm["stray"]:
-            self.g.text(s, "박자 밖 깜빡임 %d번" % sm["stray"], (right.left + 112, hy + 14), G.HAZE, "small")
+            self.g.text(s, "Off-beat blinks: %d" % sm["stray"], (right.left + 112, hy + 14), G.HAZE, "small")
         self.button_row(s)
 
     def _hist(self, s, r, dts):
@@ -647,7 +647,7 @@ def keycap(gfx, s, label, pos):
     return G.keycap(gfx, s, label, pos, "midleft")
 
 
-# ====================================================================== 먼 곳 보기
+# ====================================================================== look-far-away rest
 class RestScreen(Screen):
     CLOUDS = [(30, 40, 26), (150, 30, 34), (260, 50, 22), (340, 34, 28)]
 
@@ -655,7 +655,7 @@ class RestScreen(Screen):
         super().__init__(ctx)
         self.finished = False
         self.t_done = None
-        self.buttons = [G.Button("건너뛰기", "Esc", self._skip)]
+        self.buttons = [G.Button("Skip", "Esc", self._skip)]
 
     def _skip(self):
         if self.finished:
@@ -670,9 +670,9 @@ class RestScreen(Screen):
             self.ctx.record_rest()
             self.ctx.audio.play_jingle("jingle_good")
         if self.ctx.from_prompt:
-            self.buttons = [G.Button("닫기", "Enter", self.ctx.after_rest, primary=True)]
+            self.buttons = [G.Button("Close", "Enter", self.ctx.after_rest, primary=True)]
         else:
-            self.buttons = [G.Button("홈으로", "Enter", self.ctx.after_rest, primary=True)]
+            self.buttons = [G.Button("Home", "Enter", self.ctx.after_rest, primary=True)]
         self.focus = 0
 
     def key(self, k):
@@ -689,7 +689,7 @@ class RestScreen(Screen):
 
     def draw(self, s, now):
         t = now - self.t_enter
-        # 창밖 풍경: 낮게 깔린 노을과 먼 산
+        # view from the window: a low sunset and far hills
         sky = [(250, 214, 170), (240, 180, 150), (200, 150, 160)]
         for i, c in enumerate(sky):
             pygame.draw.rect(s, c, (0, i * 40, G.BASE_W, 40))
@@ -703,23 +703,23 @@ class RestScreen(Screen):
         for layer, (col, amp, base_y, f) in enumerate(layers):
             pts = [(0, 216)] + [(x, base_y - int(amp * abs(math.sin(x / f + layer)))) for x in range(0, G.BASE_W + 1, 6)] + [(G.BASE_W, 216)]
             pygame.draw.polygon(s, col, pts)
-        # 창틀
+        # window frame
         frame = (96, 62, 38)
         pygame.draw.rect(s, frame, (0, 0, G.BASE_W, 16))
         pygame.draw.rect(s, frame, (0, 0, 14, G.BASE_H))
         pygame.draw.rect(s, frame, (G.BASE_W - 14, 0, 14, G.BASE_H))
         pygame.draw.rect(s, frame, (0, 172, G.BASE_W, 44))
         pygame.draw.line(s, (130, 88, 56), (14, 172), (G.BASE_W - 15, 172))
-        # 졸린 올빼미
+        # sleepy owl
         sway = round(math.sin(t * 1.2))
         self.g.blit_sprite(s, "owl_me_closed", (44 + sway, 172), scale=2)
         if self.finished:
-            self.g.text(s, "잘 쉬었어요", (G.BASE_W // 2, 40), (70, 44, 60), "bold", "midtop", scale=3)
+            self.g.text(s, "Well rested", (G.BASE_W // 2, 40), (70, 44, 60), "bold", "midtop", scale=3)
             if self.ctx.from_prompt:
-                self.g.text(s, "잠시 뒤 창이 닫혀요", (G.BASE_W // 2, 88), (90, 60, 70), "small", "midtop")
+                self.g.text(s, "This window will close shortly", (G.BASE_W // 2, 88), (90, 60, 70), "small", "midtop")
         else:
             left = max(0, REST_SECONDS - t)
-            self.g.text(s, "먼 곳을 바라보며 눈을 쉬어요", (G.BASE_W // 2, 26), (70, 44, 60), "bold", "midtop")
+            self.g.text(s, "Look at something far away and rest your eyes", (G.BASE_W // 2, 26), (70, 44, 60), "bold", "midtop")
             self.g.text(s, "%d" % math.ceil(left), (G.BASE_W // 2, 46), (70, 44, 60), "bold", "midtop", scale=4)
             G.bar(s, (G.BASE_W // 2 - 60, 104, 120, 3), 1 - left / REST_SECONDS, (70, 44, 60), (226, 176, 164))
         self.button_row(s, 186)

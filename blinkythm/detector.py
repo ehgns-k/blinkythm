@@ -1,24 +1,24 @@
-"""EAR(눈 뜸 정도) 시계열에서 깜빡임을 찾아내는 순수 로직. 카메라/UI와 무관."""
+"""Finds blinks in an eye-openness (EAR) time series. Pure logic, no camera or UI."""
 from collections import deque
 
 import numpy as np
 
 DEFAULT_OPEN_EAR = 0.28
-CLOSE_RATIO = 0.72      # 평소 눈 뜸 정도의 72% 아래로 내려가면 "감는 중"
-OPEN_RATIO = 0.85       # 85% 위로 올라오면 "다시 뜸"
-CONFIRM_FRAMES = 2      # 연속 몇 프레임 아래여야 깜빡임으로 인정하는지
-MIN_OPEN_GAP = 0.08     # 직전 깜빡임이 끝난 뒤 최소 간격(초): 떨림 제거
+CLOSE_RATIO = 0.72      # below 72% of normal openness = closing
+OPEN_RATIO = 0.85       # above 85% = open again
+CONFIRM_FRAMES = 2      # frames below the threshold needed to accept a blink
+MIN_OPEN_GAP = 0.08     # minimum gap after the previous blink (s), filters flutter
 MIN_BLINK = 0.04
-MAX_BLINK = 0.80        # 이보다 길게 감으면 깜빡임이 아니라 "눈 감음"으로 취급
+MAX_BLINK = 0.80        # longer closures count as resting the eyes, not blinks
 BASELINE_WINDOW = 30.0
 
 
 class BlinkDetector:
-    """feed(t, ear)를 프레임마다 호출한다. ear가 None이면 얼굴 없음.
+    """Call feed(t, ear) every frame. ear=None means no face.
 
-    on_close(onset_t)           : 감기 시작이 확정되는 즉시 호출(게임 입력용).
-                                  onset_t는 임계값을 가로지른 시각을 프레임 사이에서 보간한 값.
-    on_blink(onset_t, duration) : 눈을 다시 뜬 뒤 호출(통계용). 너무 짧거나 긴 것은 제외.
+    on_close(onset_t)           : called as soon as a closing is confirmed (game input).
+                                  onset_t is interpolated between frames at the threshold crossing.
+    on_blink(onset_t, duration) : called after the eye opens again (statistics). Too short or long is skipped.
     """
 
     def __init__(self, on_close=None, on_blink=None):
@@ -26,7 +26,7 @@ class BlinkDetector:
         self.on_blink = on_blink
         self.closed = False
         self.baseline = DEFAULT_OPEN_EAR
-        self._samples = deque()          # (t, ear) 눈을 뜬 상태의 표본
+        self._samples = deque()          # (t, ear) samples while the eye is open
         self._since_base = 0
         self._below = 0
         self._cand_onset = None
@@ -57,7 +57,7 @@ class BlinkDetector:
     def feed(self, t, ear):
         self.ear = ear
         if ear is None:
-            # 얼굴을 놓침: 진행 중인 판정은 버린다
+            # face lost: drop the blink in progress
             self._below = 0
             self._cand_onset = None
             self._prev = None
@@ -82,7 +82,7 @@ class BlinkDetector:
                         self._cand_onset = t
                 if self._below >= CONFIRM_FRAMES:
                     if self._cand_onset - self._last_reopen < MIN_OPEN_GAP:
-                        self._armed = False      # 떨림으로 보고 버림
+                        self._armed = False      # treat as flutter and drop it
                         self._below = 0
                     else:
                         self.closed = True

@@ -1,13 +1,13 @@
-"""클래식 Windows 스타일 공통 설정. 네이티브 테마(vista)와 시스템 글꼴만 사용한다."""
+"""Shared classic Windows styling. Uses the native theme (vista) and system fonts only."""
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
 
 IS_WIN = sys.platform == "win32"
-FONT = "Malgun Gothic" if IS_WIN else "TkDefaultFont"
+FONT = "Segoe UI" if IS_WIN else "TkDefaultFont"
 
-# Windows 클래식 팔레트(게임 무대용). 그라데이션/그림자/둥근 모서리 없음.
+# Classic Windows palette. No gradients, shadows or rounded corners.
 C_FACE = "#D4D0C8"
 C_WHITE = "#FFFFFF"
 C_INK = "#000000"

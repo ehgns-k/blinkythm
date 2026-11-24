@@ -1,7 +1,7 @@
-"""그리기 기반: 384x216 픽셀 화면에 모든 것을 그린 뒤 창 크기에 맞춰 정수배로 확대한다.
+"""Drawing base: everything is drawn on a 384x216 pixel screen, then scaled by a whole number to fit the window.
 
-글자도 비트맵 글꼴(Galmuri)로 같은 픽셀 화면에 찍으므로, 그림과 글자가 같은 격자 위에 놓인다.
-고해상도 모니터에서는 배율만 커지고 모양은 그대로다.
+Text uses a bitmap font (Galmuri) on the same pixel screen, so art and text share one grid.
+On high-DPI monitors only the scale changes; the picture stays the same.
 """
 import math
 import os
@@ -12,7 +12,7 @@ from ..audio import assets_dir
 
 BASE_W, BASE_H = 384, 216
 
-# 팔레트: 밤 마을. 이름은 쓰임새가 아니라 색 자체를 가리킨다.
+# Palette: a village at night. Names describe the colour, not its use.
 INK = (27, 24, 43)
 NIGHT = (39, 37, 74)
 DUSK = (61, 57, 112)
@@ -29,7 +29,7 @@ WOOD = (122, 80, 48)
 GRADE_COLOR = {"perfect": LAMP, "good": MINT, "ok": PEACH, "miss": FOG}
 
 FONT_FILES = {
-    "small": ("Galmuri9.ttf", 12),       # (파일, 줄 높이)
+    "small": ("Galmuri9.ttf", 12),       # (file, line height)
     "body": ("Galmuri11.ttf", 16),
     "bold": ("Galmuri11-Bold.ttf", 16),
     "title": ("Galmuri14.ttf", 21),
@@ -46,7 +46,7 @@ def initial_window_size(desktop_w, desktop_h, share=0.8):
 
 
 class Presenter:
-    """기본 화면을 창에 정수배로 확대해 가운데 놓고, 창 좌표 <-> 기본 좌표를 바꾼다."""
+    """Scales the base screen into the window, centred, and maps window <-> base coordinates."""
 
     def __init__(self):
         self.scale = 1
@@ -74,7 +74,7 @@ class Gfx:
         self._fonts = {}
         self._sprites = {}
 
-    # ------------------------------------------------------------------ 글자
+    # ------------------------------------------------------------------ text
     def font(self, name):
         if name not in self._fonts:
             fn, _ = FONT_FILES[name]
@@ -105,7 +105,7 @@ class Gfx:
         return self.font(font).size(text)[0]
 
     def wrap(self, text, width, font="small"):
-        """한국어는 띄어쓰기 단위로 끊고, 한 낱말이 너무 길면 글자 단위로 끊는다."""
+        """Break at spaces; break inside a word only when the word alone is too long."""
         lines, cur = [], ""
         for word in text.split(" "):
             cand = word if not cur else cur + " " + word
@@ -124,7 +124,7 @@ class Gfx:
             lines.append(cur)
         return lines
 
-    # ------------------------------------------------------------------ 그림
+    # ------------------------------------------------------------------ sprites
     def sprite(self, name, scale=2):
         key = (name, scale)
         if key not in self._sprites:
@@ -142,9 +142,9 @@ class Gfx:
         surf.blit(img, img.get_rect(midbottom=(round(midbottom[0]), round(midbottom[1]))))
 
 
-# ---------------------------------------------------------------------- 도형
+# ---------------------------------------------------------------------- shapes
 def panel(surf, rect, fill=NIGHT, edge=DUSK, light=None):
-    """모서리 픽셀을 비운 1px 테두리 상자. light를 주면 윗변 안쪽에 밝은 줄을 긋는다."""
+    """Box with a 1 px border and empty corner pixels. With light, draws a highlight under the top edge."""
     r = pygame.Rect(rect)
     pygame.draw.rect(surf, edge, r.inflate(0, -2))
     pygame.draw.rect(surf, edge, r.inflate(-2, 0))
@@ -155,7 +155,7 @@ def panel(surf, rect, fill=NIGHT, edge=DUSK, light=None):
 
 
 def keycap(gfx, surf, label, pos, anchor="midleft", fg=INK, bg=FOG):
-    """키보드 단축키 표시. 글자 주위에 작은 키 모양을 그린다."""
+    """Keyboard shortcut hint: a small key drawn around the label."""
     img = gfx.render(label, fg, "small")
     w = img.get_width() + 6
     r = pygame.Rect(0, 0, w, 12)
@@ -195,7 +195,7 @@ class Button:
 
 
 def layout_buttons(gfx, buttons, right, y, gap=4, h=18):
-    """버튼을 오른쪽 끝에 맞춰 가로로 늘어놓은 사각형 목록을 돌려준다."""
+    """Rectangles for buttons laid out in a row, aligned to the right edge."""
     rects = []
     x = right
     for b in reversed(buttons):
@@ -214,7 +214,7 @@ def bar(surf, rect, frac, color, back=DUSK):
 
 
 def eye_icon(surf, center, closed, color=CREAM, pupil=INK):
-    """11x7 눈 모양. 감으면 아래로 휜 선."""
+    """11x7 eye. Closed is a line curving down."""
     x, y = center
     if closed:
         pts = [(x - 5, y), (x - 3, y + 2), (x + 3, y + 2), (x + 5, y)]
@@ -244,14 +244,14 @@ def ease_out(t):
 
 
 def beat_pulse(beat):
-    """박 직후에 1에서 0으로 빠르게 줄어드는 값. 박에 맞춰 살짝 튀는 움직임에 쓴다."""
+    """Drops quickly from 1 to 0 after each beat. Used for small hops on the beat."""
     if beat < 0:
         return 0.0
     return math.exp(-(beat % 1.0) * 6)
 
 
 def stars(seed, area, n):
-    """고정된 별 위치. 같은 seed면 늘 같은 하늘."""
+    """Fixed star positions. The same seed gives the same sky."""
     import random
     rnd = random.Random(seed)
     x0, y0, w, h = area

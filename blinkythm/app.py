@@ -1,4 +1,4 @@
-"""메인 창(상태/설정), 트레이, 알림 스케줄러."""
+"""Main window (status/settings), tray icon and prompt scheduler."""
 import queue
 import time
 import tkinter as tk
@@ -18,7 +18,7 @@ class App:
     def __init__(self, sim=False, demo=False, background=False):
         winenv.enable_dpi_awareness()
         self.root = tk.Tk()
-        self.root.title("Blinkythm - 눈 깜빡임 리듬")
+        self.root.title("Blinkythm")
         self.root.resizable(False, False)
         setup_style(self.root)
 
@@ -33,7 +33,7 @@ class App:
             self.settings.cooldown_minutes = 0.3
             self.settings.snooze_minutes = 0.2
             self.settings.first_run_done = True
-            self.settings.save = lambda: None      # 시험용 값이 저장되지 않게
+            self.settings.save = lambda: None      # keep demo values out of the saved settings
         self.monitor = UsageMonitor(self.settings)
         self.tracker = (SimTracker(self.monitor, self.settings.latency_offset) if sim
                         else CameraTracker(self.monitor, self.settings.camera_index))
@@ -58,19 +58,19 @@ class App:
         elif background:
             self.root.after(50, self.hide_main)
 
-    # ------------------------------------------------------------------ 구성
+    # ------------------------------------------------------------------ layout
     def _build_menu(self):
         m = tk.Menu(self.root)
         f = tk.Menu(m, tearoff=0)
-        f.add_command(label="지금 한 판 하기(P)", underline=9, command=lambda: self.open_game())
-        f.add_command(label="보정 마법사(W)...", underline=7, command=self.open_wizard)
+        f.add_command(label="Play now", underline=0, command=lambda: self.open_game())
+        f.add_command(label="Calibration wizard...", underline=12, command=self.open_wizard)
         f.add_separator()
-        f.add_command(label="창 숨기기(H)", underline=6, command=self.hide_main)
-        f.add_command(label="끝내기(X)", underline=4, command=self.quit)
-        m.add_cascade(label="파일(F)", underline=3, menu=f)
+        f.add_command(label="Hide window", underline=0, command=self.hide_main)
+        f.add_command(label="Exit", underline=1, command=self.quit)
+        m.add_cascade(label="File", underline=0, menu=f)
         h = tk.Menu(m, tearoff=0)
-        h.add_command(label="Blinkythm 정보(A)...", underline=13, command=self._about)
-        m.add_cascade(label="도움말(H)", underline=4, menu=h)
+        h.add_command(label="About Blinkythm...", underline=0, command=self._about)
+        m.add_cascade(label="Help", underline=0, menu=h)
         self.root.config(menu=m)
 
     def _build_body(self):
@@ -78,79 +78,79 @@ class App:
         nb.pack(fill="both", expand=True, padx=8, pady=(8, 4))
         st = ttk.Frame(nb, padding=10)
         se = ttk.Frame(nb, padding=10)
-        nb.add(st, text="상태")
-        nb.add(se, text="설정")
+        nb.add(st, text="Status")
+        nb.add(se, text="Settings")
 
-        # --- 상태 탭
-        cam = ttk.LabelFrame(st, text="카메라", padding=8)
+        # --- status tab
+        cam = ttk.LabelFrame(st, text="Camera", padding=8)
         cam.pack(fill="x")
         self.v_cam = tk.StringVar()
         self.v_face = tk.StringVar()
-        for i, (lbl, var) in enumerate((("상태:", self.v_cam), ("얼굴 인식:", self.v_face))):
+        for i, (lbl, var) in enumerate((("Status:", self.v_cam), ("Face:", self.v_face))):
             ttk.Label(cam, text=lbl, width=12).grid(row=i, column=0, sticky="w")
             ttk.Label(cam, textvariable=var, wraplength=330).grid(row=i, column=1, sticky="w")
-        eye = ttk.LabelFrame(st, text="눈 건강 지표", padding=8)
+        eye = ttk.LabelFrame(st, text="Eye health", padding=8)
         eye.pack(fill="x", pady=8)
         self.v_screen = tk.StringVar()
         self.v_rate = tk.StringVar()
         self.v_verdict = tk.StringVar()
-        ttk.Label(eye, text="화면 사용 시간:", width=16).grid(row=0, column=0, sticky="w")
+        ttk.Label(eye, text="Screen time:", width=16).grid(row=0, column=0, sticky="w")
         ttk.Label(eye, textvariable=self.v_screen).grid(row=0, column=1, sticky="w")
         self.bar_screen = ttk.Progressbar(eye, length=330, maximum=100)
         self.bar_screen.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
-        ttk.Label(eye, text="분당 눈 깜빡임:", width=16).grid(row=2, column=0, sticky="w")
+        ttk.Label(eye, text="Blinks per minute:", width=16).grid(row=2, column=0, sticky="w")
         ttk.Label(eye, textvariable=self.v_rate).grid(row=2, column=1, sticky="w")
         ttk.Label(eye, textvariable=self.v_verdict, wraplength=330, foreground="#808080").grid(
             row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
         row = ttk.Frame(st)
         row.pack(fill="x", pady=(4, 0))
-        ttk.Button(row, text="지금 한 판 하기(P)", underline=9, command=lambda: self.open_game()).pack(side="left")
-        ttk.Button(row, text="보정 마법사(W)...", underline=7, command=self.open_wizard).pack(side="left", padx=6)
+        ttk.Button(row, text="Play now", underline=0, command=lambda: self.open_game()).pack(side="left")
+        ttk.Button(row, text="Calibration wizard...", underline=12, command=self.open_wizard).pack(side="left", padx=6)
         self.var_monitor = tk.BooleanVar(value=self.settings.monitoring)
-        ttk.Checkbutton(st, text="눈 깜빡임 모니터링 사용", variable=self.var_monitor,
+        ttk.Checkbutton(st, text="Monitor blinking", variable=self.var_monitor,
                         command=self._toggle_monitor).pack(anchor="w", pady=(10, 0))
 
-        # --- 설정 탭
-        g = ttk.LabelFrame(se, text="알림 조건", padding=8)
+        # --- settings tab
+        g = ttk.LabelFrame(se, text="Prompt conditions", padding=8)
         g.pack(fill="x")
         self.sp = {}
         spec = [
-            ("screen_minutes", "화면 사용 시간 기준 (분)", 1, 180),
-            ("blink_threshold", "분당 깜빡임 기준 (회)", 1, 30),
-            ("away_seconds", "자리비움 인식 (초)", 10, 600),
-            ("snooze_minutes", "'다시 알림' 간격 (분)", 1, 60),
-            ("cooldown_minutes", "한 판 후 알림 중단 (분)", 1, 240),
-            ("camera_index", "카메라 장치 번호", 0, 9),
+            ("screen_minutes", "Screen time before checking (min)", 1, 180),
+            ("blink_threshold", "Blinks per minute below (count)", 1, 30),
+            ("away_seconds", "Away after no face for (s)", 10, 600),
+            ("snooze_minutes", "Snooze length (min)", 1, 60),
+            ("cooldown_minutes", "Quiet time after a game (min)", 1, 240),
+            ("camera_index", "Camera device number", 0, 9),
         ]
         for i, (key, label, lo, hi) in enumerate(spec):
             ttk.Label(g, text=label, width=26).grid(row=i, column=0, sticky="w", pady=1)
             v = tk.StringVar(value=str(self._num(getattr(self.settings, key))))
             ttk.Spinbox(g, from_=lo, to=hi, width=7, textvariable=v).grid(row=i, column=1, sticky="w")
             self.sp[key] = (v, lo, hi)
-        o = ttk.LabelFrame(se, text="옵션", padding=8)
+        o = ttk.LabelFrame(se, text="Options", padding=8)
         o.pack(fill="x", pady=8)
         self.var_dnd = tk.BooleanVar(value=self.settings.respect_dnd)
         self.var_guide = tk.BooleanVar(value=self.settings.show_guide)
         self.var_auto = tk.BooleanVar(value=winenv.is_autostart())
-        ttk.Checkbutton(o, text="전체 화면/발표 중에는 알리지 않음", variable=self.var_dnd).pack(anchor="w")
-        ttk.Checkbutton(o, text="게임에서 깜빡일 위치 가이드 표시", variable=self.var_guide).pack(anchor="w")
-        cb = ttk.Checkbutton(o, text="Windows 시작 시 자동 실행", variable=self.var_auto)
+        ttk.Checkbutton(o, text="Stay quiet during fullscreen apps and presentations", variable=self.var_dnd).pack(anchor="w")
+        ttk.Checkbutton(o, text="Show where to blink in games", variable=self.var_guide).pack(anchor="w")
+        cb = ttk.Checkbutton(o, text="Start with Windows", variable=self.var_auto)
         cb.pack(anchor="w")
         if not winenv.IS_WIN:
             cb.state(["disabled"])
         vr = ttk.Frame(o)
         vr.pack(fill="x", pady=(6, 0))
-        ttk.Label(vr, text="소리 크기").pack(side="left")
+        ttk.Label(vr, text="Volume").pack(side="left")
         self.var_vol = tk.DoubleVar(value=self.settings.volume)
         ttk.Scale(vr, from_=0.0, to=1.0, variable=self.var_vol, length=160).pack(side="left", padx=8)
         row2 = ttk.Frame(se)
         row2.pack(fill="x")
-        ttk.Button(row2, text="적용(A)", underline=3, command=self.apply_settings).pack(side="right")
-        ttk.Button(row2, text="기본값(D)", underline=4, command=self.reset_defaults).pack(side="right", padx=6)
+        ttk.Button(row2, text="Apply", underline=0, command=self.apply_settings).pack(side="right")
+        ttk.Button(row2, text="Defaults", underline=0, command=self.reset_defaults).pack(side="right", padx=6)
         self.v_offset = tk.StringVar()
         ttk.Label(se, textvariable=self.v_offset, foreground="#808080").pack(anchor="w", pady=(6, 0))
 
-        # --- 상태 표시줄
+        # --- status bar
         self.v_bar = tk.StringVar()
         tk.Label(self.root, textvariable=self.v_bar, relief="sunken", anchor="w", bd=1).pack(
             side="bottom", fill="x", padx=8, pady=(0, 8))
@@ -159,14 +159,14 @@ class App:
     def _num(x):
         return int(x) if float(x).is_integer() else x
 
-    # ------------------------------------------------------------------ 설정
+    # ------------------------------------------------------------------ settings
     def apply_settings(self):
         s = self.settings
         for key, (v, lo, hi) in self.sp.items():
             try:
                 val = float(v.get())
             except ValueError:
-                messagebox.showwarning("설정", "숫자를 입력하세요.", parent=self.root)
+                messagebox.showwarning("Settings", "Please enter a number.", parent=self.root)
                 return
             val = max(lo, min(hi, val))
             setattr(s, key, int(val) if key == "camera_index" else val)
@@ -194,7 +194,7 @@ class App:
         self.settings.save()
         self.refresh_status()
 
-    # ------------------------------------------------------------------ 창 관리
+    # ------------------------------------------------------------------ windows
     def show_main(self):
         self.root.deiconify()
         self.root.lift()
@@ -220,7 +220,7 @@ class App:
         self.root.destroy()
 
     def post(self, fn):
-        """다른 스레드(트레이)에서 UI 작업을 안전하게 맡긴다."""
+        """Queue UI work from another thread (the tray) to run on the Tk thread."""
         self._ui_q.put(fn)
 
     def _pump(self):
@@ -243,11 +243,11 @@ class App:
         d.ellipse((22, 20, 42, 44), fill=(0, 0, 128, 255))
         Item = pystray.MenuItem
         menu = pystray.Menu(
-            Item("Blinkythm 열기", lambda: self.post(self.show_main), default=True),
-            Item("지금 한 판 하기", lambda: self.post(lambda: self.open_game())),
-            Item("모니터링 사용", lambda: self.post(self._tray_toggle), checked=lambda i: self.settings.monitoring),
+            Item("Open Blinkythm", lambda: self.post(self.show_main), default=True),
+            Item("Play now", lambda: self.post(lambda: self.open_game())),
+            Item("Monitor blinking", lambda: self.post(self._tray_toggle), checked=lambda i: self.settings.monitoring),
             pystray.Menu.SEPARATOR,
-            Item("끝내기", lambda: self.post(self.quit)),
+            Item("Exit", lambda: self.post(self.quit)),
         )
         try:
             self.tray = pystray.Icon(APP_NAME, img, "Blinkythm", menu)
@@ -261,16 +261,16 @@ class App:
 
     def _about(self):
         messagebox.showinfo(
-            "Blinkythm 정보",
-            "Blinkythm %s\n\n웹캠으로 눈 깜빡임 빈도를 살피다가, 화면을 오래 보고 깜빡임이 줄면 "
-            "짧은 리듬 게임을 제안합니다.\n영상은 컴퓨터 안에서만 처리되며 저장·전송되지 않습니다.\n\n"
-            "게임: 등대 신호, 올빼미 합창, 깜빡 사진관\n"
-            "그림과 소리는 모두 이 프로그램을 위해 코드로 만든 것입니다(tools/make_assets.py)." % __version__,
+            "About Blinkythm",
+            "Blinkythm %s\n\nWatches how often you blink through the webcam. After a long stretch at the screen "
+            "with too few blinks, it suggests a short rhythm game.\nVideo is processed on this computer only and is never saved or sent.\n\n"
+            "Games: Lighthouse, Owl Choir, Blink Studio\n"
+            "All art and sound were generated for this program (tools/make_assets.py)." % __version__,
             parent=self.root)
 
-    # ------------------------------------------------------------------ 게임/마법사
+    # ------------------------------------------------------------------ game and wizard
     def open_game(self, stage=None, from_prompt=False):
-        """게임 창(pygame-ce)을 연다. 창이 닫힐 때까지 그 안에서 Tk 이벤트도 함께 처리한다."""
+        """Open the game window (pygame-ce). Tk events keep running inside it until it closes."""
         if self.game is not None or self.wizard is not None:
             return
         from .game.app import GameApp
@@ -298,36 +298,36 @@ class App:
         if ok and self.settings.monitoring and not self.demo:
             self.hide_main()
 
-    # ------------------------------------------------------------------ 주기 작업
+    # ------------------------------------------------------------------ periodic work
     def refresh_status(self):
         s = self.settings
         tr = self.tracker
         now = time.perf_counter()
         if tr.error:
-            self.v_cam.set("오류 - " + tr.error)
+            self.v_cam.set("Error - " + tr.error)
         elif self.sim:
-            self.v_cam.set("시험 모드(카메라 없음)")
+            self.v_cam.set("Test mode (no camera)")
         else:
-            self.v_cam.set("연결됨 (장치 %d)" % tr.camera_index)
-        self.v_face.set("예" if tr.face_visible else "아니오")
+            self.v_cam.set("Connected (device %d)" % tr.camera_index)
+        self.v_face.set("Yes" if tr.face_visible else "No")
         sec = self.monitor.screen_seconds(now)
-        self.v_screen.set("%s / %d분" % (fmt_hms(sec), s.screen_minutes))
+        self.v_screen.set("%s / %d min" % (fmt_hms(sec), s.screen_minutes))
         self.bar_screen["value"] = min(100, sec / (s.screen_minutes * 60) * 100)
         rate = self.monitor.blink_rate(now)
         if rate is None:
-            self.v_rate.set("측정 중...")
-            self.v_verdict.set("최근 1분 동안 얼굴이 충분히 보이면 계산됩니다.")
+            self.v_rate.set("Measuring...")
+            self.v_verdict.set("Shown once your face has been visible for most of the last minute.")
         else:
-            self.v_rate.set("%.1f 회" % rate)
-            self.v_verdict.set("알림 기준: 분당 %g회 미만. 일반 평균은 15~20회이며, 화면에 집중하면 크게 줄 수 있습니다." % s.blink_threshold)
-        self.v_offset.set("입력 지연 보정값: %+d ms%s" % (
-            round(s.latency_offset * 1000), "" if s.first_run_done else "  (마법사에서 측정하세요)"))
+            self.v_rate.set("%.1f" % rate)
+            self.v_verdict.set("Prompt below %g per minute. People often blink much less while focused on a screen." % s.blink_threshold)
+        self.v_offset.set("Input delay offset: %+d ms%s" % (
+            round(s.latency_offset * 1000), "" if s.first_run_done else "  (measure it in the wizard)"))
         if not s.monitoring:
-            self.v_bar.set("모니터링 중지됨")
+            self.v_bar.set("Monitoring off")
         elif self.game is not None:
-            self.v_bar.set("게임 중")
+            self.v_bar.set("In a game")
         else:
-            self.v_bar.set("모니터링 중")
+            self.v_bar.set("Monitoring")
 
     def _tick(self):
         try:

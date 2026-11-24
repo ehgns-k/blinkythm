@@ -1,10 +1,10 @@
-"""게임 애셋(픽셀 그림 PNG, 효과음/반주 WAV)을 코드로 만든다.
+"""Generates the game assets (pixel art PNG, sound effect and backing WAV) from code.
 
     python tools/make_assets.py
 
-결과는 assets/sprites/*.png, assets/sounds/*.wav에 저장되며 저장소에 함께 올린다.
-같은 코드로 다시 만들면 같은 파일이 나온다(난수 시드 고정).
-그림은 원래 크기(1배)로 저장하고, 게임에서 정수배로 확대해 쓴다.
+Output goes to assets/sprites/*.png and assets/sounds/*.wav and is committed with the code.
+The random seed is fixed, so running it again gives identical files.
+Sprites are saved at 1x and scaled up by whole numbers in the game.
 """
 import os
 import sys
@@ -17,8 +17,8 @@ SPRITE_DIR = os.path.join(ROOT, "assets", "sprites")
 SOUND_DIR = os.path.join(ROOT, "assets", "sounds")
 SR = 44100
 
-# =========================================================================== 그림
-# 글자 하나가 픽셀 하나. '.'은 투명. 글자 -> 색은 팔레트로 정한다.
+# =========================================================================== sprites
+# One character per pixel. '.' is transparent. The palette maps characters to colours.
 
 OWL_OPEN = [
     "..k..........k..",
@@ -170,7 +170,7 @@ DESK_BELL_PAL = {"k": "#000000", "y": "#D8B030", "w": "#FFF0A0", "g": "#606060"}
 def sprite_image(rows, palette):
     from PIL import Image
     w = len(rows[0])
-    assert all(len(r) == w for r in rows), "행 길이가 다릅니다"
+    assert all(len(r) == w for r in rows), "rows differ in length"
     img = Image.new("RGBA", (w, len(rows)), (0, 0, 0, 0))
     px = img.load()
     for y, row in enumerate(rows):
@@ -198,7 +198,7 @@ def sprites():
     return out
 
 
-# =========================================================================== 소리
+# =========================================================================== sounds
 def t_axis(dur):
     return np.arange(int(SR * dur)) / SR
 
@@ -209,7 +209,7 @@ def env(n, attack=0.002, decay=8.0):
 
 
 def lowpass(x, cutoff):
-    """1차 저역 통과. 짧은 소리에만 쓰므로 단순 반복문으로 충분하다."""
+    """One-pole low-pass. Only used on short sounds, so a plain loop is fast enough."""
     a = 1.0 - np.exp(-2 * np.pi * cutoff / SR)
     y = np.empty_like(x)
     acc = 0.0
@@ -232,13 +232,13 @@ def norm(x, peak):
     return x / m * peak
 
 
-# --- 타악기 ------------------------------------------------------------------
+# --- drums -------------------------------------------------------------------
 def kick():
     t = t_axis(0.32)
     f = 45 + 80 * np.exp(-t * 28)
     ph = 2 * np.pi * np.cumsum(f) / SR
     y = np.sin(ph) * env(len(t), 0.001, 11)
-    y[:60] += np.linspace(0.6, 0, 60)          # 때리는 소리
+    y[:60] += np.linspace(0.6, 0, 60)          # beater click
     return norm(y, 0.9)
 
 
@@ -266,7 +266,7 @@ def woodblock(freq):
     return norm(y, 0.8)
 
 
-# --- 음정 악기 ---------------------------------------------------------------
+# --- pitched instruments -----------------------------------------------------
 def bass(note, dur):
     t = t_axis(dur)
     f = midi(note)
@@ -334,7 +334,7 @@ def dull():
 
 
 def stamp_thud(rng):
-    """도장 찍는 소리: 낮은 쿵 + 종이 스치는 잡음."""
+    """Stamp sound: a low thud plus a short paper rustle."""
     t = t_axis(0.18)
     body = np.sin(2 * np.pi * (90 + 60 * np.exp(-t * 40)) * t) * env(len(t), 0.001, 26)
     n = int(SR * 0.05)
@@ -361,14 +361,14 @@ def jingle(notes, step, tail=0.6):
     return buf
 
 
-# --- 반주 루프(2마디 = 8박) -----------------------------------------------------
+# --- backing loops (2 bars = 8 beats) -----------------------------------------
 def loop_buffer(bpm):
     beat = 60.0 / bpm
     return np.zeros(int(round(8 * beat * SR))), beat
 
 
 def wrap_mix(buf, y, sec, gain=1.0):
-    """루프 끝을 넘는 꼬리는 앞쪽으로 감아 넣어 이음매가 끊기지 않게 한다."""
+    """Wrap the tail that runs past the loop end back to the start, so the seam is smooth."""
     i = int(round(sec * SR)) % len(buf)
     y = y * gain
     while len(y):
@@ -387,14 +387,14 @@ def loop_lighthouse(rng):
         wrap_mix(buf, s, x * b, 0.22)
     for x in range(16):
         wrap_mix(buf, h, x * b / 2, 0.18 if x % 2 else 0.1)
-    # D단조 | 내림B장조 - C장조
+    # D minor | B-flat major - C major
     for at, n, d in ((0, 38, 1.4), (1.5, 38, 0.45), (2, 45, 0.9), (3, 41, 0.9),
                      (4, 34, 1.9), (6, 36, 1.4), (7.5, 36, 0.45)):
         wrap_mix(buf, bass(n, d * b), at * b, 0.5)
     wrap_mix(buf, pad([62, 65, 69], 4 * b), 0, 0.18)
     wrap_mix(buf, pad([58, 62, 65], 2 * b), 4 * b, 0.18)
     wrap_mix(buf, pad([60, 64, 67], 2 * b), 6 * b, 0.18)
-    # 파도 소리: 낮은 잡음이 한 루프에 한 번 밀려왔다 빠진다
+    # waves: low noise that swells and fades once per loop
     n = len(buf)
     sw = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(n) / n)
     buf += lowpass(rng.standard_normal(n), 500) * sw * 0.35
@@ -408,10 +408,10 @@ def loop_owls(rng):
         wrap_mix(buf, k, x * b, 0.45)
     for x in (1, 3, 5, 7):
         wrap_mix(buf, r, x * b, 0.25)
-    for x in range(8):                         # 셋잇단 느낌으로 민 뒷박
+    for x in range(8):                         # swung off-beats
         wrap_mix(buf, h, x * b, 0.12)
         wrap_mix(buf, h, (x + 2 / 3) * b, 0.08)
-    # A단조 | F장조 - G장조
+    # A minor | F major - G major
     for at, n, d in ((0, 45, 3.8), (4, 41, 1.9), (6, 43, 1.9)):
         wrap_mix(buf, bass(n, d * b), at * b, 0.45)
     arp = [69, 72, 76, 72, 69, 72, 76, 79, 65, 69, 72, 69, 67, 71, 74, 71]
@@ -428,7 +428,7 @@ def loop_photo(rng):
         wrap_mix(buf, h, (x + 0.5) * b, 0.2)
     for x in (1, 3, 5, 7):
         wrap_mix(buf, s, x * b, 0.35)
-    # C장조 | F장조 - G장조, 옥타브를 오가는 베이스
+    # C major | F major - G major, bass jumping octaves
     roots = [36] * 8 + [41] * 4 + [43] * 4
     for x, n in enumerate(roots):
         wrap_mix(buf, bass(n + (12 if x % 2 else 0), 0.45 * b), x * b / 2, 0.4)
@@ -444,12 +444,12 @@ def sounds():
     out = {
         "count": norm(woodblock(1200), 0.7),
         "count_accent": norm(woodblock(1600), 0.8),
-        "horn": norm(horn(50), 0.75),                     # 등대: 낮은 뱃고동
-        "ship_bell": norm(bell(1318, 0.5, 7), 0.75),      # 배: 높은 종
-        "hoot_a": norm(hoot(67), 0.7),                    # 올빼미 G4
+        "horn": norm(horn(50), 0.75),                     # lighthouse: low foghorn
+        "ship_bell": norm(bell(1318, 0.5, 7), 0.75),      # ship: high bell
+        "hoot_a": norm(hoot(67), 0.7),                    # owl G4
         "hoot_b": norm(hoot(71), 0.7),                    # B4
         "hoot_me": norm(hoot(74), 0.75),                  # D5
-        "desk_bell": norm(bell(2093, 0.7, 5), 0.7),       # 사진관 호출 종
+        "desk_bell": norm(bell(2093, 0.7, 5), 0.7),       # studio desk bell
         "shutter": norm(shutter(rng), 0.8),
         "dull": norm(dull(), 0.6),
         "ui_move": norm(woodblock(900), 0.25),

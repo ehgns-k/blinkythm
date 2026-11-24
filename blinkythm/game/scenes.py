@@ -1,4 +1,4 @@
-"""미니게임 장면. 플레이 화면의 무대(SCENE_TOP~SCENE_BOT)만 그리고, 판정이나 박자 계산은 하지 않는다."""
+"""Minigame scenes. Draws only the stage area (SCENE_TOP..SCENE_BOT); no judging or timing here."""
 import math
 from dataclasses import dataclass, field
 from typing import List
@@ -9,7 +9,7 @@ from .. import rhythm as R
 from . import gfx as G
 
 SCENE_TOP, SCENE_BOT = 16, 168
-FLASH = 0.16             # 상대가 눈을 감고 있는 시간(초)
+FLASH = 0.16             # how long the other characters keep their eyes closed (s)
 
 
 @dataclass
@@ -17,7 +17,7 @@ class View:
     now: float
     beat: float
     player_closed: bool
-    hits: List[tuple] = field(default_factory=list)     # (판정 시각, Result)
+    hits: List[tuple] = field(default_factory=list)     # (time judged, Result)
 
 
 def active(cues, actor, now, dur=FLASH):
@@ -57,7 +57,7 @@ class LighthouseScene(Scene):
         rel = beat - COUNT_IN
         if rel < 0:
             return None
-        return "등대 신호 보기" if rel % 8 < 4 else "배의 등불로 답하기"
+        return "Watch the lighthouse" if rel % 8 < 4 else "Answer with the lamp"
 
     def draw(self, s, v):
         sea = 112
@@ -93,7 +93,7 @@ class LighthouseScene(Scene):
 class OwlScene(Scene):
     popup_pos = (264, 56)
     XS = {"owl_a": 116, "owl_b": 192, "owl_me": 268}
-    NAMES = {"owl_a": "첫째", "owl_b": "둘째", "owl_me": "나"}
+    NAMES = {"owl_a": "1st", "owl_b": "2nd", "owl_me": "You"}
     STARS = G.stars(23, (0, SCENE_TOP, G.BASE_W, 110), 40)
 
     def draw(self, s, v):
@@ -101,12 +101,12 @@ class OwlScene(Scene):
         G.draw_stars(s, self.STARS, v.now, (214, 208, 240), (80, 72, 130))
         pygame.draw.circle(s, (240, 230, 176), (330, 44), 12)
         pygame.draw.circle(s, (30, 24, 64), (336, 40), 11)
-        # 먼 숲
+        # distant forest
         for x in range(-8, G.BASE_W, 16):
             h = 10 + (x * 7 % 9)
             pygame.draw.polygon(s, (36, 34, 78), [(x, SCENE_BOT), (x + 8, SCENE_BOT - h - 12), (x + 16, SCENE_BOT)])
         pygame.draw.rect(s, (36, 34, 78), (0, SCENE_BOT - 12, G.BASE_W, 12))
-        # 가지
+        # branch
         pygame.draw.rect(s, (90, 58, 34), (24, 137, 340, 5))
         pygame.draw.line(s, (120, 80, 48), (24, 137), (363, 137))
         pygame.draw.line(s, (90, 58, 34), (60, 137), (48, 126), 2)
@@ -138,17 +138,17 @@ class PhotoScene(Scene):
     def draw(self, s, v):
         floor = 140
         pygame.draw.rect(s, (226, 210, 178), (0, SCENE_TOP, G.BASE_W, floor - SCENE_TOP))
-        for x in range(0, G.BASE_W, 24):                          # 벽지 줄무늬
+        for x in range(0, G.BASE_W, 24):                          # wallpaper stripes
             pygame.draw.line(s, (216, 198, 164), (x, SCENE_TOP), (x, floor - 1))
         pygame.draw.rect(s, (150, 104, 70), (0, floor, G.BASE_W, SCENE_BOT - floor))
         pygame.draw.line(s, (110, 74, 48), (0, floor), (G.BASE_W, floor))
         for x in range(0, G.BASE_W, 32):
             pygame.draw.line(s, (130, 90, 60), (x, floor + 1), (x - 10, SCENE_BOT))
-        # 배경지
+        # backdrop
         pygame.draw.rect(s, (176, 202, 220), (140, 30, 112, floor - 30))
         pygame.draw.line(s, (140, 166, 190), (140, 30), (251, 30))
         pygame.draw.rect(s, (150, 176, 200), (138, 26, 116, 4))
-        # 책상과 종
+        # desk and bell
         pygame.draw.rect(s, G.WOOD, (20, 116, 80, 5))
         pygame.draw.rect(s, (96, 62, 38), (24, 121, 4, floor - 121))
         pygame.draw.rect(s, (96, 62, 38), (92, 121, 4, floor - 121))
@@ -158,7 +158,7 @@ class PhotoScene(Scene):
         if ring:
             for a in (-1, 1):
                 pygame.draw.line(s, (160, 120, 20), (60 + a * 14, 96), (60 + a * 18, 92))
-        # 손님: 종을 친 뒤부터 사진을 찍고 잠시 뒤까지 앞에 서 있다
+        # customers stand in front from their bell until shortly after their photo
         judged = {res.note.idx: when for when, res in v.hits}
         waiting = []
         for n in self.stage.notes:
@@ -173,9 +173,9 @@ class PhotoScene(Scene):
             waiting.append(n)
         for k, n in reversed(list(enumerate(waiting[:3]))):
             self.g.blit_sprite(s, n.actor, (178 + 34 * k, floor - 1), 3)
-        # 카메라
+        # camera
         self.g.blit_sprite(s, "camera_shut" if v.player_closed else "camera_open", (322, 164), 3)
-        # 찍은 사진
+        # photos taken
         x = 110
         for when, res in v.hits[-7:]:
             col = G.GRADE_COLOR[res.grade]

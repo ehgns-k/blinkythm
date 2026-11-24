@@ -1,4 +1,4 @@
-"""Blinkythm - 눈 깜빡임 리듬. 실행: python main.py  (옵션: --sim 카메라 없이 시험, --demo 알림을 빨리 확인, --background 숨김 시작)"""
+"""Blinkythm entry point. Run: python main.py  (options: --sim test without a camera, --demo show the prompt quickly, --background start hidden)"""
 import argparse
 import os
 import sys
@@ -9,7 +9,7 @@ if getattr(sys, "frozen", False) is False:
 
 
 def _fix_std_streams():
-    # 콘솔 없는 창 모드(exe)에서는 stdout/stderr가 None이라 출력 시 오류가 난다
+        # In a windowed exe there is no console, so stdout/stderr are None and printing would fail
     for name in ("stdout", "stderr"):
         if getattr(sys, name) is None:
             setattr(sys, name, open(os.devnull, "w"))
@@ -18,9 +18,9 @@ def _fix_std_streams():
 def main():
     _fix_std_streams()
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sim", action="store_true", help="카메라 없이 스페이스바로 시험")
-    ap.add_argument("--demo", action="store_true", help="12초만 지나도 알림이 뜨도록 조건을 낮춤(설정은 저장되지 않음)")
-    ap.add_argument("--background", action="store_true", help="창을 숨기고 시작")
+    ap.add_argument("--sim", action="store_true", help="test without a camera; Space acts as a blink")
+    ap.add_argument("--demo", action="store_true", help="show the prompt after 12 seconds (settings are not saved)")
+    ap.add_argument("--background", action="store_true", help="start with the window hidden")
     a = ap.parse_args()
     try:
         from blinkythm.app import App

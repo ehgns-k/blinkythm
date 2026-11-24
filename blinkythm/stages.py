@@ -1,33 +1,33 @@
-"""미니게임 세 가지의 채보와 설명. 화면 그리기는 game/scenes.py, 판정은 rhythm.py가 맡는다.
+"""Charts and instructions for the three minigames. Drawing is in game/scenes.py, judging in rhythm.py.
 
-세 게임은 입력(눈 깜빡임)은 같고, 박자를 알려 주는 방식이 다르다.
-- 등대 신호: 따라 하기. 등대가 한 마디 동안 보낸 신호를 다음 마디에 그대로 돌려준다.
-- 올빼미 합창: 이어 가기. 앞의 두 올빼미가 우는 간격만큼 기다렸다가 세 번째로 운다.
-- 깜빡 사진관: 일정한 지연. 손님이 종을 치면 언제나 정확히 2박 뒤에 셔터를 누른다.
+All three use the same input (a blink) but set the beat in different ways.
+- Lighthouse: copy. The lighthouse flashes a one-bar signal; answer it in the next bar.
+- Owl Choir: continue. Two owls hoot a gap; wait the same gap and hoot third.
+- Blink Studio: fixed delay. When a customer rings the bell, take the photo exactly 2 beats later.
 """
 from dataclasses import dataclass, field
 from typing import List
 
 from .rhythm import Cue, Note
 
-COUNT_IN = 4        # 시작 전 4박 세기
-TAIL = 2            # 마지막 노트 뒤 여유
-PAGE_BEATS = 8      # 가이드 막대 한 쪽의 길이
+COUNT_IN = 4        # beats counted before the first bar
+TAIL = 2            # beats after the last bar
+PAGE_BEATS = 8      # beats shown on one page of the guide strip
 
 
 @dataclass
 class Stage:
     key: str
     title: str
-    style: str                 # 한 줄 방식 설명(목록에 표시)
+    style: str                 # one-word description for the game list
     bpm: float
-    loop: str                  # 반주 루프 소리 이름
-    hit_sound: str             # 잘 맞혔을 때 나는 소리
+    loop: str                  # backing loop sound name
+    hit_sound: str             # sound for a good hit
     howto: List[str]
     sections: List[str]
     cues: List[Cue] = field(default_factory=list)
     notes: List[Note] = field(default_factory=list)
-    length: float = 0.0        # 반주가 끝나는 박(노트 마지막 박 이후 첫 마디 경계)
+    length: float = 0.0        # beat where the backing stops (first bar line after the last note)
 
     @property
     def beat_sec(self):
@@ -42,7 +42,7 @@ class Stage:
         return self.total_beats * self.beat_sec
 
     def section_at(self, beat):
-        """현재 박에서 다음에 칠 노트의 구간 이름."""
+        """Name of the section of the next note from the given beat."""
         for n in self.notes:
             if n.beat >= beat - 0.5:
                 return self.sections[n.section]
@@ -59,8 +59,8 @@ class Stage:
         return self
 
 
-# --------------------------------------------------------------------- 등대 신호
-# (구간, 4박 안의 박 위치). 한 라운드는 신호 4박 + 응답 4박.
+# --------------------------------------------------------------------- Lighthouse
+# (section, beat positions within 4 beats). One round = 4 signal beats + 4 answer beats.
 LIGHTHOUSE_ROUNDS = [
     (0, [0, 2]),
     (0, [0, 1, 2]),
@@ -73,14 +73,14 @@ LIGHTHOUSE_ROUNDS = [
 
 def build_lighthouse():
     st = Stage(
-        key="lighthouse", title="등대 신호", style="따라 하기", bpm=92, loop="loop_lighthouse",
+        key="lighthouse", title="Lighthouse", style="Copy", bpm=92, loop="loop_lighthouse",
         hit_sound="ship_bell",
         howto=[
-            "밤바다의 등대가 한 마디(4박) 동안 불빛 신호를 보냅니다.",
-            "다음 마디에 같은 박자로 눈을 깜빡여 배의 등불로 답하세요.",
-            "뱃고동 소리가 신호입니다. 소리와 불빛을 함께 기억하면 쉽습니다.",
+            "The lighthouse flashes a signal over one bar (4 beats).",
+            "In the next bar, blink the same rhythm to answer with the ship's lamp.",
+            "Each flash comes with a foghorn. Remember the sound along with the light.",
         ],
-        sections=["정박", "뒷박에서 시작", "엇박"],
+        sections=["On the beat", "Late start", "Off-beat"],
     )
     for r, (sec, pat) in enumerate(LIGHTHOUSE_ROUNDS):
         start = COUNT_IN + 8 * r
@@ -90,8 +90,8 @@ def build_lighthouse():
     return st.finish()
 
 
-# --------------------------------------------------------------------- 올빼미 합창
-# (구간, 마디, 마디 안 시작 박, 간격). 첫째가 s, 둘째가 s+d에 울면 플레이어는 s+2d.
+# --------------------------------------------------------------------- Owl Choir
+# (section, bar, start beat in bar, gap). First owl at s, second at s+d, the player at s+2d.
 OWL_PHRASES = [
     (0, 0, 0, 1), (0, 1, 0, 1), (0, 2, 1, 1), (0, 3, 0, 1),
     (1, 4, 0, 0.5), (1, 4, 2, 0.5), (1, 5, 1, 0.5), (1, 6, 0, 0.5), (1, 6, 2, 0.5), (1, 7, 1, 0.5),
@@ -102,14 +102,14 @@ OWL_PHRASES = [
 
 def build_owls():
     st = Stage(
-        key="owls", title="올빼미 합창", style="이어 가기", bpm=100, loop="loop_owls",
+        key="owls", title="Owl Choir", style="Continue", bpm=100, loop="loop_owls",
         hit_sound="hoot_me",
         howto=[
-            "나뭇가지의 올빼미 셋이 차례로 눈을 감으며 웁니다. 맨 오른쪽 파란 올빼미가 나입니다.",
-            "첫째와 둘째가 운 간격을 그대로 이어서, 같은 간격 뒤에 눈을 깜빡이세요.",
-            "간격은 한 박, 반 박, 한 박 반, 두 박으로 바뀝니다.",
+            "Three owls on a branch close their eyes and hoot in turn. You are the blue one on the right.",
+            "Keep the gap between the first two hoots and blink after the same gap.",
+            "The gap changes between 1, 1/2, 1 1/2 and 2 beats.",
         ],
-        sections=["한 박 간격", "반 박 간격", "느린 간격", "섞어서"],
+        sections=["1-beat gap", "Half-beat gap", "Long gap", "Mixed"],
     )
     for sec, bar, s, d in OWL_PHRASES:
         b0 = COUNT_IN + bar * 4 + s
@@ -119,9 +119,9 @@ def build_owls():
     return st.finish()
 
 
-# --------------------------------------------------------------------- 깜빡 사진관
+# --------------------------------------------------------------------- Blink Studio
 PHOTO_DELAY = 2
-# (구간, 종이 울리는 박 - COUNT_IN 기준)
+# (section, bell beat counted from COUNT_IN)
 PHOTO_BELLS = (
     [(0, b) for b in (0, 4, 8, 12)]
     + [(1, b) for b in (16, 17, 20, 21, 24, 25)]
@@ -132,14 +132,14 @@ PHOTO_BELLS = (
 
 def build_photo():
     st = Stage(
-        key="photo", title="깜빡 사진관", style="2박 뒤에", bpm=112, loop="loop_photo",
+        key="photo", title="Blink Studio", style="2 beats later", bpm=112, loop="loop_photo",
         hit_sound="shutter",
         howto=[
-            "손님이 책상 위 종을 치면 정확히 2박 뒤에 눈을 깜빡여 셔터를 누르세요.",
-            "종이 연달아 울리면 사진도 연달아 찍습니다. 앞 사진을 찍는 동안 다음 종이 울릴 수 있습니다.",
-            "종이 박 사이(반 박)에 울려도 셔터는 언제나 2박 뒤입니다.",
+            "When a customer rings the desk bell, blink exactly 2 beats later to take the photo.",
+            "Bells can ring back to back, sometimes before the last photo is taken.",
+            "Even when a bell rings between beats, the shutter is still 2 beats later.",
         ],
-        sections=["한 명씩", "두 명 연달아", "반 박 손님", "섞어서"],
+        sections=["One at a time", "Back to back", "Half-beat bells", "Mixed"],
     )
     for k, (sec, b) in enumerate(PHOTO_BELLS):
         at = COUNT_IN + b
@@ -159,7 +159,7 @@ def make_stage(key):
 
 
 def next_stage(last):
-    """알림에서 열 때 고를 게임: 지난번 다음 게임을 차례로."""
+    """Game the home screen suggests: the one after the last game played."""
     if last in ORDER:
         return ORDER[(ORDER.index(last) + 1) % len(ORDER)]
     return ORDER[0]

@@ -1,7 +1,7 @@
-"""소리: assets/sounds의 WAV를 읽어 한 판 전체를 미리 합성해 재생하고, 판정 소리는 따로 낸다.
+"""Sound: renders a whole game from the WAV files in assets/sounds and plays it, plus hit sounds on demand.
 
-반주와 신호음을 한 버퍼로 미리 섞어 한 번에 재생하므로, 화면 갱신이 늦어도 박자가 흔들리지 않는다.
-버퍼 합성(render_*)은 pygame 없이도 동작하므로 시험에서 그대로 쓴다.
+The backing loop and cue sounds are mixed into one buffer and played at once, so a slow frame cannot shift the beat.
+Rendering (render_*) works without pygame, so the tests use it directly.
 """
 import os
 import sys
@@ -28,7 +28,7 @@ def assets_dir():
 def load_wav(path):
     with wave.open(path, "rb") as w:
         if w.getsampwidth() != 2 or w.getframerate() != SR:
-            raise ValueError("44.1kHz 16비트 WAV만 지원합니다: %s" % path)
+            raise ValueError("Only 44.1 kHz 16-bit WAV is supported: %s" % path)
         raw = w.readframes(w.getnframes())
         ch = w.getnchannels()
     y = np.frombuffer(raw, dtype="<i2").astype(np.float64) / 32768.0
@@ -38,7 +38,7 @@ def load_wav(path):
 
 
 class SampleBank:
-    """이름 -> 샘플(numpy). 처음 쓸 때 읽어 둔다."""
+    """Name -> samples (numpy), loaded on first use."""
 
     def __init__(self, folder=None):
         self.folder = folder or os.path.join(assets_dir(), "sounds")
@@ -66,7 +66,7 @@ def _mix_into(buf, y, at_sec, gain=1.0):
 
 
 def render_stage(stage, bank):
-    """한 판의 음원: 4박 세기 -> 반주 루프 반복 + 신호음 -> 마무리 화음."""
+    """One game's audio: 4-beat count-in -> repeated backing loop + cues -> closing chord."""
     bs = stage.beat_sec
     from .stages import COUNT_IN
     buf = np.zeros(int((stage.total_beats * bs + 1.6) * SR))
@@ -76,7 +76,7 @@ def render_stage(stage, bank):
     loop_beats = 8
     b = COUNT_IN
     while b < stage.length:
-        # 루프 시작 위치를 매번 박 단위로 다시 계산하므로 반올림 오차가 쌓이지 않는다
+        # Each loop start is computed from the beat again, so rounding errors do not add up
         seg = loop[: int(round(min(loop_beats, stage.length - b) * bs * SR))]
         _mix_into(buf, seg, b * bs)
         b += loop_beats
@@ -84,13 +84,13 @@ def render_stage(stage, bank):
     for c in stage.cues:
         _mix_into(buf, bank.get(c.sound), c.beat * bs)
     peak = float(np.max(np.abs(buf))) if len(buf) else 0.0
-    if peak > 0.95:                 # 겹친 소리로 찌그러지지 않게 전체를 살짝 낮춘다
+    if peak > 0.95:                 # lower the whole mix a little if overlapping sounds would clip
         buf *= 0.95 / peak
     return buf
 
 
 def render_clicks(ticks, total_sec, bank):
-    """보정 마법사용 메트로놈. ticks: [(초, 강박 여부)]"""
+    """Metronome for the calibration wizard. ticks: [(seconds, accented)]"""
     buf = np.zeros(int((total_sec + 0.5) * SR))
     for s, acc in ticks:
         _mix_into(buf, bank.get("count_accent" if acc else "count"), s, 0.8)
@@ -121,7 +121,7 @@ class Audio:
         return pygame.mixer.Sound(buffer=to_bytes(y, self.volume * gain))
 
     def prepare(self, names):
-        """판정 중에 바로 낼 효과음을 미리 만든다(현재 음량 반영)."""
+        """Pre-build the sounds played during judging (at the current volume)."""
         if not self.ok:
             return
         self._sfx = {}
@@ -136,7 +136,7 @@ class Audio:
                 snd.play()
 
     def play_buffer(self, buf):
-        """버퍼 재생을 시작하고 재생 직전 시각을 돌려준다(소리를 낼 수 없으면 None)."""
+        """Start playing a buffer and return the time just before playback (None if there is no audio)."""
         if not self.ok:
             return None
         snd = self._sound(buf)
@@ -148,7 +148,7 @@ class Audio:
         return self.play_buffer(render_stage(stage, self.bank))
 
     def play_track(self, ticks, cues, total_sec):
-        """보정 마법사용(cues는 쓰지 않음). 재생 직전 시각을 돌려준다."""
+        """For the calibration wizard (cues are ignored). Returns the time just before playback."""
         return self.play_buffer(render_clicks(ticks, total_sec, self.bank))
 
     def play_jingle(self, name):
