@@ -4,6 +4,8 @@ Blinkythm watches how often you blink through your webcam. When you have been at
 
 There are three minigames (about 35 seconds each) and a medley that plays all three. Blinking is the only input.
 
+License: [MIT](LICENSE). Windows builds are set up to be signed through SignPath once the project is accepted; see the [code signing policy](CODE_SIGNING_POLICY.md).
+
 ## Install and run
 
 **Release build:** download `Blinkythm-*-win64.zip` from Releases, unzip it and run `Blinkythm.exe`.
@@ -120,6 +122,9 @@ Video is used in memory to find eye landmarks and is never saved or sent. The ap
     tools/make_icon.py         builds the exe icon
     tests/test_core.py         logic tests and headless game-flow tests: python tests/test_core.py
     docs/releases/             release notes, one file per version
+    docs/signpath-artifact-configuration.xml   what SignPath signs inside the build
+    LICENSE                    MIT license
+    CODE_SIGNING_POLICY.md     code signing policy (SignPath)
 
 ## Assets
 
@@ -130,6 +135,37 @@ The fonts are the bitmap versions of Galmuri 2.40.3 by Lee Minseo (quiple): Galm
 ## Releases
 
 Pushing a `v*` tag builds the exe and publishes a release. The workflow can also be started by hand with a `tag` input, which creates that tag on the chosen commit. Release notes come from `docs/releases/<tag>.md`. To change the notes of an existing release, edit that file and run the workflow by hand with that `tag` and `notes_only` checked.
+
+## Code signing
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org). The [code signing policy](CODE_SIGNING_POLICY.md) lists who approves signing and what is signed.
+
+The release workflow signs `Blinkythm.exe` only when these repository settings exist. Until then it builds unsigned releases as before.
+
+| Kind | Name | Value |
+|---|---|---|
+| Secret | `SIGNPATH_API_TOKEN` | API token of a SignPath CI user that may submit requests |
+| Variable | `SIGNPATH_ORGANIZATION_ID` | SignPath organization ID |
+| Variable | `SIGNPATH_PROJECT_SLUG` | SignPath project slug |
+| Variable | `SIGNPATH_SIGNING_POLICY_SLUG` | signing policy slug, for example `release-signing` |
+| Variable | `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | slug of the artifact configuration made from `docs/signpath-artifact-configuration.xml` |
+
+The workflow uploads the PyInstaller output as an artifact, submits it to SignPath and waits up to an hour for approval. It checks that the returned `Blinkythm.exe` carries a signature, packages the signed folder, and adds the SignPath attribution line to the release notes.
+
+## Third-party software
+
+The Windows build bundles these packages. Their licenses as listed on PyPI:
+
+| Package | License |
+|---|---|
+| mediapipe | Apache 2.0 |
+| numpy | BSD-3-Clause (with 0BSD, MIT, Zlib and CC0-1.0 parts) |
+| pygame-ce | LGPL 2.1 |
+| pystray | LGPL 3.0 |
+| Pillow | MIT-CMU |
+| Galmuri fonts | SIL Open Font License 1.1 |
+
+The exe is built with PyInstaller (GPL 2.0 or later with an exception that allows distributing the built program under any license).
 
 ## Known limitations
 

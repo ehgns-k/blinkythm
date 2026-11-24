@@ -65,6 +65,41 @@ jobs:
           if ($p.HasExited) { throw "Blinkythm.exe exited early with code $($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
 
+      # Signing runs only after the SignPath settings exist in the repository
+      # (see CODE_SIGNING_POLICY.md and the README). Without them the build stays unsigned.
+      - name: Upload unsigned build for signing
+        id: unsigned
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blinkythm-unsigned
+          path: dist/Blinkythm
+
+      - name: Sign with SignPath
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      - name: Use the signed build
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature signed/Blinkythm.exe
+          if (-not $sig.SignerCertificate) { throw "signed/Blinkythm.exe has no signature" }
+          Write-Host "Signed by: $($sig.SignerCertificate.Subject) ($($sig.Status))"
+          Remove-Item -Recurse -Force dist/Blinkythm
+          Move-Item signed dist/Blinkythm
+          echo "SIGNED=1" >> $env:GITHUB_ENV
+
       - name: Package
         shell: pwsh
         run: |
@@ -72,6 +107,13 @@ jobs:
           $name = if ($tag) { "Blinkythm-$tag-win64" } else { "Blinkythm-dev-win64" }
           Compress-Archive -Path dist/Blinkythm -DestinationPath "$name.zip"
           echo "ASSET=$name.zip" >> $env:GITHUB_ENV
+          if ($tag) {
+            $notes = Get-Content -Raw "docs/releases/$tag.md"
+            if ($env:SIGNED) {
+              $notes += "`nFree code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).`n"
+            }
+            Set-Content -Path release-notes.md -Value $notes -NoNewline
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -85,7 +127,7 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           target_commitish: ${{ github.sha }}
           name: Blinkythm ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          body_path: docs/releases/${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}.md
+          body_path: release-notes.md
           files: ${{ env.ASSET }}
 
   notes:
