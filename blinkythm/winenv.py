@@ -1,0 +1,88 @@
+"""Windows 환경 연동: 작업 영역, 전체화면/발표 감지, 시작프로그램 등록, DPI. 다른 OS에서는 안전하게 무시."""
+import os
+import sys
+
+IS_WIN = sys.platform == "win32"
+_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_RUN_NAME = "Blinkythm"
+
+
+def enable_dpi_awareness():
+    if not IS_WIN:
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+def work_area(root):
+    """작업 표시줄을 뺀 사용 가능 영역 (left, top, right, bottom)."""
+    if IS_WIN:
+        import ctypes
+        from ctypes import wintypes
+        r = wintypes.RECT()
+        if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0):
+            return r.left, r.top, r.right, r.bottom
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight() - 40
+
+
+def is_busy():
+    """전체화면 게임/영상, 발표 모드, 방해 금지 상태이면 True."""
+    if not IS_WIN:
+        return False
+    import ctypes
+    try:
+        state = ctypes.c_int(0)
+        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0:
+            # 2 busy, 3 D3D 전체화면, 4 발표 모드
+            return state.value in (2, 3, 4)
+    except Exception:
+        pass
+    return False
+
+
+def launch_command():
+    if getattr(sys, "frozen", False):
+        return '"%s" --background' % sys.executable
+    exe = sys.executable
+    if exe.lower().endswith("python.exe"):
+        w = exe[:-10] + "pythonw.exe"
+        if os.path.exists(w):
+            exe = w
+    main = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
+    return '"%s" "%s" --background' % (exe, main)
+
+
+def is_autostart():
+    if not IS_WIN:
+        return False
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as k:
+            winreg.QueryValueEx(k, _RUN_NAME)
+            return True
+    except OSError:
+        return False
+
+
+def set_autostart(enable):
+    if not IS_WIN:
+        return False
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            if enable:
+                winreg.SetValueEx(k, _RUN_NAME, 0, winreg.REG_SZ, launch_command())
+            else:
+                try:
+                    winreg.DeleteValue(k, _RUN_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError:
+        return False
