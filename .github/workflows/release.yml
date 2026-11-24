@@ -1,0 +1,68 @@
+name: Build and Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Run tests
+        run: python tests/test_core.py
+
+      - name: Create icon
+        run: python tools/make_icon.py
+
+      - name: Build exe
+        run: >
+          pyinstaller --noconfirm --clean --windowed --onedir
+          --name Blinkythm
+          --icon assets/blinkythm.ico
+          --collect-all mediapipe
+          --hidden-import pystray._win32
+          main.py
+
+      - name: Smoke test (imports inside the bundle)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/Blinkythm/Blinkythm.exe" -ArgumentList "--sim","--demo" -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { throw "Blinkythm.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = if ($env:GITHUB_REF_TYPE -eq "tag") { "Blinkythm-$env:GITHUB_REF_NAME-win64" } else { "Blinkythm-dev-win64" }
+          Compress-Archive -Path dist/Blinkythm -DestinationPath "$name.zip"
+          echo "ASSET=$name.zip" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Blinkythm-win64
+          path: ${{ env.ASSET }}
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Blinkythm ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: ${{ env.ASSET }}
