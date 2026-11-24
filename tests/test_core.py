@@ -283,6 +283,8 @@ def test_suggest_shift():
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):          # Windows 콘솔(cp1252)에서도 한글 출력이 깨지지 않게
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     fails = 0
     for k, v in list(globals().items()):
         if k.startswith("test_"):
